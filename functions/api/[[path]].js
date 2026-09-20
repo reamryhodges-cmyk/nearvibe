@@ -8,7 +8,7 @@ const random = (size = 32) => b64(crypto.getRandomValues(new Uint8Array(size))).
 const sha256 = async value => b64(new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(value))));
 const hashPassword = async (password, salt = b64(crypto.getRandomValues(new Uint8Array(16)))) => {
   const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
-  const hash = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: bytes(salt), iterations: 210000, hash: 'SHA-256' }, key, 256);
+  const hash = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: bytes(salt), iterations: 100000, hash: 'SHA-256' }, key, 256);
   return { salt, hash: b64(new Uint8Array(hash)) };
 };
 const secureEqual = (a, b) => { if (!a || !b || a.length !== b.length) return false; let n = 0; for (let i=0;i<a.length;i++) n |= a.charCodeAt(i)^b.charCodeAt(i); return n === 0; };

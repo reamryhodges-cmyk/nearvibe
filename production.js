@@ -10,6 +10,7 @@
 
   function showUser(user) {
     document.querySelector('#auth').classList.add('hide'); document.querySelector('#main').classList.remove('hide');
+    document.querySelector('#deck').innerHTML='<div class="card"><h3>Loading profiles…</h3><p>Checking the secure database.</p></div>';
     document.querySelector('#pname').textContent = user.name;
     const avatar = document.querySelector('#avatar'); avatar.textContent = user.name[0].toUpperCase();
     localStorage.setItem('nv_user', JSON.stringify({ name:user.name, email:user.email, role:user.role, server:true }));

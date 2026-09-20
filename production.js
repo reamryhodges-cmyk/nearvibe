@@ -14,6 +14,7 @@
     const avatar = document.querySelector('#avatar'); avatar.textContent = user.name[0].toUpperCase();
     localStorage.setItem('nv_user', JSON.stringify({ name:user.name, email:user.email, role:user.role, server:true }));
     loadProfiles(); loadMatches(); loadWallet();
+    if(user.role === 'admin' && window.NearVibeEnableAdmin) window.NearVibeEnableAdmin();
   }
   async function loadMe() { try { const result=await api('/me'); showUser(result.user); if(result.user.photo_data){const a=document.querySelector('#avatar');a.style.backgroundImage=`url(${result.user.photo_data})`;a.textContent='';} } catch { if(localStorage.getItem('nv_user')) { localStorage.removeItem('nv_user'); location.reload(); } } }
   async function loadProfiles() { try { const r=await api('/profiles'); serverProfiles=r.profiles; profileIndex=0; renderProfile(); } catch(e){ toast(e.message); } }

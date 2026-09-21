@@ -21,7 +21,7 @@
     serverProfiles=launchProfiles;profileIndex=0;renderProfile();
     loadMatches();loadWallet();if(user.role === 'admin' && window.NearVibeEnableAdmin) window.NearVibeEnableAdmin();
   }
-  async function loadMe() { try { const result=await api('/me'); showUser(result.user); if(result.user.photo_data){const a=document.querySelector('#avatar');a.style.backgroundImage=`url(${result.user.photo_data})`;a.textContent='';} } catch { try { if(localStorage.getItem('nv_user')) { localStorage.removeItem('nv_user'); location.reload(); } } catch {} } }
+  async function loadMe() { try { const result=await api('/me'); showUser(result.user); if(result.user.photo_data){const a=document.querySelector('#avatar');a.style.backgroundImage=`url(${result.user.photo_data})`;a.textContent='';} } catch { try { localStorage.removeItem('nv_user'); } catch {} document.querySelector('#main').classList.add('hide');document.querySelector('#auth').classList.remove('hide'); } }
   async function loadProfiles() { try { const r=await api('/profiles'); serverProfiles=r.profiles; profileIndex=0; renderProfile(); } catch(e){ document.querySelector('#deck').innerHTML=`<div class="card"><h3>Profiles took too long to load</h3><p>${esc(e.message)}</p><button id="retryProfiles" class="primary wide">Try again</button></div>`;document.querySelector('#retryProfiles').onclick=()=>{document.querySelector('#deck').innerHTML='<div class="card"><h3>Loading profiles…</h3><p>Checking the secure database.</p></div>';loadProfiles();};toast(e.message); } }
   function renderProfile() {
     const p=serverProfiles[profileIndex]; if(!p){document.querySelector('#deck').innerHTML='<div class="card"><h3>You’re all caught up</h3><p>More profiles will appear here.</p></div>';return;}

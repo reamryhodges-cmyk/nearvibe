@@ -16,6 +16,9 @@
 /login.html
   Cache-Control: no-store, max-age=0
 
+/app.html
+  Cache-Control: no-store, max-age=0
+
 /sw.js
   Cache-Control: no-cache, must-revalidate
 

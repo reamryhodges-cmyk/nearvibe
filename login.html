@@ -32,9 +32,9 @@
         const response=await fetch('/api/auth/login',{method:'POST',credentials:'same-origin',signal:controller.signal,headers:{'content-type':'application/json'},body:JSON.stringify({email:document.querySelector('#email').value.trim(),password:document.querySelector('#password').value})});
         const data=await response.json().catch(()=>({error:'Unexpected server response.'}));
         if(!response.ok)throw new Error(data.error||'Login failed.');
-        localStorage.setItem('nv_user',JSON.stringify({...data.user,server:true}));
+        try{localStorage.setItem('nv_user',JSON.stringify({...data.user,server:true}))}catch{}
         message.style.color='#9fffc0';message.textContent='Login successful. Opening NearVibe…';
-        location.replace('/?build=19&signed=1');
+        location.replace('/?build=20&signed=1');
       }catch(error){message.textContent=error.name==='AbortError'?'Cloudflare took too long. Tap Log in to try again.':error.message;button.disabled=false;button.textContent='Log in securely'}finally{clearTimeout(timer)}
     });
   </script>

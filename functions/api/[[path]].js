@@ -57,7 +57,7 @@ export async function onRequest(context) {
   if (!env.DB) return fail('D1 binding DB is not configured.', 503);
   const method = request.method, path = '/' + (Array.isArray(params.path) ? params.path.join('/') : params.path || '');
   try {
-    if (path === '/health') return json({ ok:true, service:'NearVibe API', database:true, time:new Date().toISOString() });
+    if (path === '/health') return json({ ok:true, service:'NearVibe API', database:true, build:'safety-20260921', time:new Date().toISOString() });
     if (path === '/payments/webhook' && method === 'POST') {
       if (!env.STRIPE_WEBHOOK_SECRET) return fail('Webhook is not configured.',503);
       const raw=await request.text(), header=request.headers.get('stripe-signature')||'', parts=Object.fromEntries(header.split(',').map(x=>x.split('='))), signed=`${parts.t}.${raw}`;

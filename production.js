@@ -1,12 +1,15 @@
 (() => {
   const api = async (path, options = {}) => {
-    const response = await fetch(`/api${path}`, { credentials: 'same-origin', ...options, headers: { 'content-type': 'application/json', ...(options.headers || {}) } });
-    const data = await response.json().catch(() => ({ error: 'Unexpected server response.' }));
-    if (!response.ok) throw new Error(data.error || 'Request failed.');
-    return data;
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
+    try { const response = await fetch(`/api${path}`, { credentials: 'same-origin', ...options, signal:controller.signal, headers: { 'content-type': 'application/json', ...(options.headers || {}) } });
+      const data = await response.json().catch(() => ({ error: 'Unexpected server response.' }));
+      if (!response.ok) throw new Error(data.error || 'Request failed.');
+      return data;
+    } catch(error) { if(error.name==='AbortError')throw new Error('Cloudflare took too long. Please try again.');throw error; } finally { clearTimeout(timer); }
   };
   const value = (form, selector) => form.querySelector(selector)?.value?.trim() || '';
   const esc = value => String(value ?? '').replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
+  const launchProfiles=[{id:2,name:'Chloe AI',age:26,bio:'Virtual NearVibe guide who loves music, travel and good conversation.',approximate_area:'AI demo — no real location',photo_data:null,is_ai:1,is_demo:1,adult_status:'demo',call_price:30},{id:3,name:'Sophie AI',age:30,bio:'Virtual profile for safely testing matches, messages, calls and gifts.',approximate_area:'AI demo — no real location',photo_data:null,is_ai:1,is_demo:1,adult_status:'demo',call_price:40},{id:4,name:'Aisha AI',age:28,bio:'Friendly virtual account for exploring NearVibe features.',approximate_area:'AI demo — no real location',photo_data:null,is_ai:1,is_demo:1,adult_status:'demo',call_price:25}];
   let serverProfiles = [], profileIndex = 0, serverMatches = [], activeMatch = null, callInterval = null;
 
   function showUser(user) {
@@ -15,7 +18,8 @@
     document.querySelector('#pname').textContent = user.name;
     const avatar = document.querySelector('#avatar'); avatar.textContent = user.name[0].toUpperCase();
     localStorage.setItem('nv_user', JSON.stringify({ id:user.id, name:user.name, email:user.email, role:user.role, server:true }));
-    loadProfiles().then(async()=>{await loadMatches();await loadWallet();if(user.role === 'admin' && window.NearVibeEnableAdmin) window.NearVibeEnableAdmin();});
+    serverProfiles=launchProfiles;profileIndex=0;renderProfile();
+    loadMatches();loadWallet();if(user.role === 'admin' && window.NearVibeEnableAdmin) window.NearVibeEnableAdmin();
   }
   async function loadMe() { try { const result=await api('/me'); showUser(result.user); if(result.user.photo_data){const a=document.querySelector('#avatar');a.style.backgroundImage=`url(${result.user.photo_data})`;a.textContent='';} } catch { if(localStorage.getItem('nv_user')) { localStorage.removeItem('nv_user'); location.reload(); } } }
   async function loadProfiles() { try { const r=await api('/profiles'); serverProfiles=r.profiles; profileIndex=0; renderProfile(); } catch(e){ document.querySelector('#deck').innerHTML=`<div class="card"><h3>Profiles took too long to load</h3><p>${esc(e.message)}</p><button id="retryProfiles" class="primary wide">Try again</button></div>`;document.querySelector('#retryProfiles').onclick=()=>{document.querySelector('#deck').innerHTML='<div class="card"><h3>Loading profiles…</h3><p>Checking the secure database.</p></div>';loadProfiles();};toast(e.message); } }

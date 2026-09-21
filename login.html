@@ -34,7 +34,7 @@
         if(!response.ok)throw new Error(data.error||'Login failed.');
         try{localStorage.setItem('nv_user',JSON.stringify({...data.user,server:true}))}catch{}
         message.style.color='#9fffc0';message.textContent='Login successful. Opening NearVibe…';
-        location.replace('/?build=20&signed=1');
+        location.replace('/?build=21');
       }catch(error){message.textContent=error.name==='AbortError'?'Cloudflare took too long. Tap Log in to try again.':error.message;button.disabled=false;button.textContent='Log in securely'}finally{clearTimeout(timer)}
     });
   </script>

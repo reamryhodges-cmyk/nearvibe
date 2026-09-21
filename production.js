@@ -47,6 +47,6 @@
   document.querySelector('#photo').addEventListener('change',e=>{const file=e.target.files[0];if(!file||file.size>2e6)return toast('Choose an image under 2 MB');const reader=new FileReader();reader.onload=async()=>{try{await api('/me/photo',{method:'POST',body:JSON.stringify({photo:reader.result})});toast('Photo saved securely');loadMe();}catch(err){toast(err.message)}};reader.readAsDataURL(file);},true);
   document.querySelector('#logout').addEventListener('click',async e=>{e.preventDefault();e.stopImmediatePropagation();await api('/auth/logout',{method:'POST'});localStorage.clear();location.reload();},true);
   document.querySelector('#verify').addEventListener('click',async e=>{e.stopImmediatePropagation();try{await api('/verification/request',{method:'POST'});toast('Verification request opened');}catch(err){toast(err.message)}},true);
-  if (localStorage.getItem('nv_user')) loadMe();
+  loadMe();
   window.NearVibeAPI={api,loadWallet};
 })();

@@ -20,13 +20,13 @@ Mobile-first installable PWA prototype for adult (18+) local social discovery.
 
 ## Production backend
 
-Cloudflare Pages Functions and D1 now provide server-side authentication, profiles, matches, messages, wallets, gifts, call-rate negotiation, minute billing, safety reports and admin moderation. Stripe Checkout endpoints are included; real charges remain unavailable until Stripe secrets and price IDs are configured.
+Cloudflare Pages Functions and D1 now provide server-side authentication, profiles, matches, messages, wallets, gifts, call-rate negotiation, minute billing, safety reports and admin moderation. Stripe Checkout endpoints are included; real charges remain unavailable until the Stripe secrets are configured. Coin prices come from the D1 `coin_packages` rows, so Stripe Price IDs are optional.
 
 ### Deploy
 
 1. Create a D1 database named `nearvibe-production`, replace the placeholder ID in `wrangler.toml`, then run `npx wrangler d1 migrations apply nearvibe-production --remote`.
 2. Add Pages secrets `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and a long random `ADMIN_SETUP_TOKEN`.
-3. Set the Stripe webhook URL to `https://YOUR-DOMAIN/api/payments/webhook` for `checkout.session.completed`.
+3. Set the Stripe webhook URL to `https://nearvibe.pages.dev/api/payments/webhook` for `checkout.session.completed`.
 4. Deploy the repository as a Cloudflare Pages project. The static root is `.` and Functions are detected from `/functions`.
 5. Create the owner account normally, then make one authenticated `POST /api/admin/bootstrap` request with the setup token. Remove or rotate the token afterwards.
 

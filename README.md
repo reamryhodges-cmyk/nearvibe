@@ -45,3 +45,4 @@ python3 -m http.server 8080
 ```
 
 Open `http://localhost:8080`.
+Deployment refreshed after enabling Stripe production secrets.

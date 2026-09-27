@@ -1,4 +1,5 @@
-const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
+
+       const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), { status, headers: { ...JSON_HEADERS, ...headers } });
 const fail = (message, status = 400) => json({ ok: false, error: message }, status);
 const enc = new TextEncoder();
@@ -11,161 +12,288 @@ const hashPassword = async (password, salt = b64(crypto.getRandomValues(new Uint
   const hash = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: bytes(salt), iterations: 100000, hash: 'SHA-256' }, key, 256);
   return { salt, hash: b64(new Uint8Array(hash)) };
 };
-const secureEqual = (a, b) => { if (!a || !b || a.length !== b.length) return false; let n = 0; for (let i=0;i<a.length;i++) n |= a.charCodeAt(i)^b.charCodeAt(i); return n === 0; };
-const cookie = request => Object.fromEntries((request.headers.get('cookie') || '').split(';').map(x => x.trim().split('=').map(decodeURIComponent)).filter(x => x.length === 2));
-const body = async request => { try { return await request.json(); } catch { return {}; } };
-const clean = (v, max=300) => String(v || '').trim().slice(0,max);
-const age = dob => { const date=new Date(`${dob}T00:00:00Z`); return /^\d{4}-\d{2}-\d{2}$/.test(String(dob))&&!Number.isNaN(date.getTime())?Math.floor((Date.now()-date.getTime())/31557600000):NaN; };
-const sessionCookie = (token, days) => `nv_session=${encodeURIComponent(token)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${days*86400}`;
+const secureEqual = (a, b) => {
+  if (!a || !b || a.length !== b.length) return false;
+  let n = 0;
+  for (let i = 0; i < a.length; i++) n |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return n === 0;
+};
+const cookie = request => Object.fromEntries(
+  (request.headers.get('cookie') || '')
+    .split(';')
+    .map(x => x.trim().split('=').map(decodeURIComponent))
+    .filter(x => x.length === 2)
+);
+const body = async request => {
+  try { return await request.json(); }
+  catch { return {}; }
+};
+const clean = (v, max = 300) => String(v || '').trim().slice(0, max);
+const age = dob => {
+  const date = new Date(`${dob}T00:00:00Z`);
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(dob)) && !Number.isNaN(date.getTime())
+    ? Math.floor((Date.now() - date.getTime()) / 31557600000)
+    : NaN;
+};
+const sessionCookie = (token, days) =>
+  `nv_session=${encodeURIComponent(token)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${days * 86400}`;
 
 async function currentUser(request, env) {
   const token = cookie(request).nv_session;
   if (!token) return null;
   const hash = await sha256(token);
-  return env.DB.prepare(`SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>datetime('now')`).bind(hash).first();
+  return env.DB.prepare(
+    `SELECT u.* FROM sessions s
+     JOIN users u ON u.id=s.user_id
+     WHERE s.token_hash=? AND s.expires_at>datetime('now')`
+  ).bind(hash).first();
 }
 
 async function requireUser(request, env, roles) {
   const user = await currentUser(request, env);
   if (!user) throw Object.assign(new Error('Please log in.'), { status: 401 });
   if (user.status !== 'active') throw Object.assign(new Error('Account suspended.'), { status: 403 });
-  if (roles && !roles.includes(user.role)) throw Object.assign(new Error('Admin access required.'), { status: 403 });
+  if (roles && !roles.includes(user.role)) {
+    throw Object.assign(new Error('Admin access required.'), { status: 403 });
+  }
   return user;
 }
 
 async function createSession(userId, env) {
-  const token = random(36), id = crypto.randomUUID(), days = Math.max(1, Number(env.SESSION_DAYS || 30));
-  await env.DB.prepare(`INSERT INTO sessions(id,user_id,token_hash,expires_at) VALUES(?,?,?,datetime('now',?))`).bind(id,userId,await sha256(token),`+${days} days`).run();
+  const token = random(36);
+  const id = crypto.randomUUID();
+  const days = Math.max(1, Number(env.SESSION_DAYS || 30));
+
+  await env.DB.prepare(
+    `INSERT INTO sessions(id,user_id,token_hash,expires_at)
+     VALUES(?,?,?,datetime('now',?))`
+  ).bind(id, userId, await sha256(token), `+${days} days`).run();
+
   return { token, days };
 }
 
 async function isMatched(db, a, b) {
-  return db.prepare(`SELECT * FROM matches WHERE (user_a=? AND user_b=?) OR (user_a=? AND user_b=?)`).bind(a,b,b,a).first();
+  return db.prepare(
+    `SELECT * FROM matches
+     WHERE (user_a=? AND user_b=?) OR (user_a=? AND user_b=?)`
+  ).bind(a, b, b, a).first();
 }
 
 async function isBlocked(db, a, b) {
-  return db.prepare(`SELECT 1 FROM blocks WHERE (blocker_id=? AND blocked_id=?) OR (blocker_id=? AND blocked_id=?)`).bind(a,b,b,a).first();
+  return db.prepare(
+    `SELECT 1 FROM blocks
+     WHERE (blocker_id=? AND blocked_id=?)
+        OR (blocker_id=? AND blocked_id=?)`
+  ).bind(a, b, b, a).first();
 }
 
-async function transfer(db, userId, amount, type, refType, refId, idem, metadata='{}') {
-  const existing = await db.prepare('SELECT balance_after FROM coin_transactions WHERE idempotency_key=?').bind(idem).first();
+async function transfer(db, userId, amount, type, refType, refId, idem, metadata = '{}') {
+  const existing = await db.prepare(
+    'SELECT balance_after FROM coin_transactions WHERE idempotency_key=?'
+  ).bind(idem).first();
+
   if (existing) return existing.balance_after;
-  const wallet = await db.prepare('SELECT balance FROM wallets WHERE user_id=?').bind(userId).first();
+
+  const wallet = await db.prepare(
+    'SELECT balance FROM wallets WHERE user_id=?'
+  ).bind(userId).first();
+
   const next = Number(wallet?.balance || 0) + amount;
-  if (next < 0) throw Object.assign(new Error('Not enough coins.'), { status: 409 });
+
+  if (next < 0) {
+    throw Object.assign(new Error('Not enough coins.'), { status: 409 });
+  }
+
   await db.batch([
-    db.prepare('INSERT OR IGNORE INTO wallets(user_id,balance) VALUES(?,0)').bind(userId),
-    db.prepare('UPDATE wallets SET balance=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?').bind(next,userId),
-    db.prepare(`INSERT INTO coin_transactions(user_id,amount,type,reference_type,reference_id,idempotency_key,balance_after,metadata) VALUES(?,?,?,?,?,?,?,?)`).bind(userId,amount,type,refType,refId,idem,next,metadata)
+    db.prepare(
+      'INSERT OR IGNORE INTO wallets(user_id,balance) VALUES(?,0)'
+    ).bind(userId),
+
+    db.prepare(
+      'UPDATE wallets SET balance=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?'
+    ).bind(next, userId),
+
+    db.prepare(
+      `INSERT INTO coin_transactions(
+        user_id,amount,type,reference_type,reference_id,
+        idempotency_key,balance_after,metadata
+      ) VALUES(?,?,?,?,?,?,?,?)`
+    ).bind(userId, amount, type, refType, refId, idem, next, metadata)
   ]);
+
   return next;
 }
 
-async function creditCreatorEarnings(db,userId,coins,type,refId,unit){
-  const grossPence=Math.max(1,Math.floor(Number(coins)*2));
-  const amountPence=Math.max(1,Math.floor(grossPence*0.7));
-  const platformPence=grossPence-amountPence;
-  const idem=`earning:${type}:${refId}:${unit}`;
-  const existing=await db.prepare('SELECT amount_pence FROM earning_transactions WHERE idempotency_key=?').bind(idem).first();
-  if(existing)return Number(existing.amount_pence);
+async function creditCreatorEarnings(db, userId, coins, type, refId, unit) {
+  const grossPence = Math.max(1, Math.floor(Number(coins) * 2));
+  const amountPence = Math.max(1, Math.floor(grossPence * 0.7));
+  const platformPence = grossPence - amountPence;
+  const idem = `earning:${type}:${refId}:${unit}`;
+
+  const existing = await db.prepare(
+    'SELECT amount_pence FROM earning_transactions WHERE idempotency_key=?'
+  ).bind(idem).first();
+
+  if (existing) return Number(existing.amount_pence);
+
   await db.batch([
-    db.prepare('INSERT OR IGNORE INTO creator_earnings(user_id) VALUES(?)').bind(userId),
-    db.prepare('UPDATE creator_earnings SET available_pence=available_pence+?,lifetime_pence=lifetime_pence+?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?').bind(amountPence,amountPence,userId),
-    db.prepare(`INSERT INTO earning_transactions(user_id,amount_pence,type,reference_type,reference_id,idempotency_key,metadata) VALUES(?,?,?,?,?,?,?)`).bind(userId,amountPence,type,type==='paid_call'?'call':'gift',String(refId),idem,JSON.stringify({unit,coins,gross_pence:grossPence,creator_share_percent:70,platform_share_percent:30,platform_pence:platformPence}))
+    db.prepare(
+      'INSERT OR IGNORE INTO creator_earnings(user_id) VALUES(?)'
+    ).bind(userId),
+
+    db.prepare(
+      `UPDATE creator_earnings
+       SET available_pence=available_pence+?,
+           lifetime_pence=lifetime_pence+?,
+           updated_at=CURRENT_TIMESTAMP
+       WHERE user_id=?`
+    ).bind(amountPence, amountPence, userId),
+
+    db.prepare(
+      `INSERT INTO earning_transactions(
+        user_id,amount_pence,type,reference_type,reference_id,
+        idempotency_key,metadata
+      ) VALUES(?,?,?,?,?,?,?)`
+    ).bind(
+      userId,
+      amountPence,
+      type,
+      type === 'paid_call' ? 'call' : 'gift',
+      String(refId),
+      idem,
+      JSON.stringify({
+        unit,
+        coins,
+        gross_pence: grossPence,
+        creator_share_percent: 70,
+        platform_share_percent: 30,
+        platform_pence: platformPence
+      })
+    )
   ]);
+
   return amountPence;
 }
 
-async function ensureCreatorEarningsSchema(db){
-  await db.prepare(`CREATE TABLE IF NOT EXISTS creator_earnings (
-    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    available_pence INTEGER NOT NULL DEFAULT 0 CHECK(available_pence >= 0),
-    pending_pence INTEGER NOT NULL DEFAULT 0 CHECK(pending_pence >= 0),
-    lifetime_pence INTEGER NOT NULL DEFAULT 0 CHECK(lifetime_pence >= 0),
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  )`).run();
+async function ensureCreatorEarningsSchema(db) {
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS creator_earnings (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      available_pence INTEGER NOT NULL DEFAULT 0 CHECK(available_pence >= 0),
+      pending_pence INTEGER NOT NULL DEFAULT 0 CHECK(pending_pence >= 0),
+      lifetime_pence INTEGER NOT NULL DEFAULT 0 CHECK(lifetime_pence >= 0),
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`
+  ).run();
 
-  await db.prepare(`CREATE TABLE IF NOT EXISTS earning_transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id),
-    amount_pence INTEGER NOT NULL CHECK(amount_pence > 0),
-    type TEXT NOT NULL,
-    reference_type TEXT,
-    reference_id TEXT,
-    idempotency_key TEXT NOT NULL UNIQUE,
-    metadata TEXT NOT NULL DEFAULT '{}',
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  )`).run();
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS earning_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      amount_pence INTEGER NOT NULL CHECK(amount_pence > 0),
+      type TEXT NOT NULL,
+      reference_type TEXT,
+      reference_id TEXT,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      metadata TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`
+  ).run();
 
-  await db.prepare('CREATE INDEX IF NOT EXISTS idx_earnings_user ON earning_transactions(user_id,id)').run();
+  await db.prepare(
+    'CREATE INDEX IF NOT EXISTS idx_earnings_user ON earning_transactions(user_id,id)'
+  ).run();
 }
 
 export async function onRequest(context) {
   const { request, env, params } = context;
-  if (!env.DB) return fail('D1 binding DB is not configured.', 503);
+
+  if (!env.DB) {
+    return fail('D1 binding DB is not configured.', 503);
+  }
 
   const method = request.method;
-  const path = '/' + (Array.isArray(params.path) ? params.path.join('/') : params.path || '');
+  const path = '/' + (
+    Array.isArray(params.path)
+      ? params.path.join('/')
+      : params.path || ''
+  );
 
   try {
     await ensureCreatorEarningsSchema(env.DB);
 
     if (path === '/health') {
       return json({
-        ok:true,
-        service:'NearVibe API',
-        database:true,
-        build:'safety-20260921',
-        time:new Date().toISOString()
+        ok: true,
+        service: 'NearVibe API',
+        database: true,
+        build: 'stripe-checkout-20260927',
+        time: new Date().toISOString()
       });
     }
 
     if (path === '/payments/webhook' && method === 'POST') {
-      if (!env.STRIPE_WEBHOOK_SECRET) return fail('Webhook is not configured.',503);
+      if (!env.STRIPE_WEBHOOK_SECRET) {
+        return fail('Webhook is not configured.', 503);
+      }
 
-      const raw=await request.text();
-      const header=request.headers.get('stripe-signature')||'';
-      const signatureParts=header.split(',').map(x=>x.trim().split('=')).filter(x=>x.length===2);
-      const timestamp=signatureParts.find(([key])=>key==='t')?.[1];
-      const signatures=signatureParts.filter(([key])=>key==='v1').map(([,value])=>value);
-      const signed=`${timestamp}.${raw}`;
+      const raw = await request.text();
+      const header = request.headers.get('stripe-signature') || '';
+      const signatureParts = header
+        .split(',')
+        .map(x => x.trim().split('='))
+        .filter(x => x.length === 2);
 
-      const key=await crypto.subtle.importKey(
+      const timestamp = signatureParts.find(([key]) => key === 't')?.[1];
+      const signatures = signatureParts
+        .filter(([key]) => key === 'v1')
+        .map(([, value]) => value);
+
+      const signed = `${timestamp}.${raw}`;
+
+      const key = await crypto.subtle.importKey(
         'raw',
         enc.encode(env.STRIPE_WEBHOOK_SECRET),
-        {name:'HMAC',hash:'SHA-256'},
+        { name: 'HMAC', hash: 'SHA-256' },
         false,
         ['sign']
       );
 
-      const expected=Array.from(
-        new Uint8Array(await crypto.subtle.sign('HMAC',key,enc.encode(signed)))
-      ).map(x=>x.toString(16).padStart(2,'0')).join('');
+      const expected = Array.from(
+        new Uint8Array(
+          await crypto.subtle.sign('HMAC', key, enc.encode(signed))
+        )
+      ).map(x => x.toString(16).padStart(2, '0')).join('');
 
-      if(
+      if (
         !timestamp ||
-        Math.abs(Date.now()/1000-Number(timestamp))>300 ||
-        !signatures.some(signature=>secureEqual(expected,signature))
-      ) return fail('Invalid Stripe signature.',400);
+        Math.abs(Date.now() / 1000 - Number(timestamp)) > 300 ||
+        !signatures.some(signature => secureEqual(expected, signature))
+      ) {
+        return fail('Invalid Stripe signature.', 400);
+      }
 
-      const event=JSON.parse(raw);
+      const event = JSON.parse(raw);
 
-      if(
-        event.type==='checkout.session.completed' &&
-        event.data.object.payment_status==='paid'
-      ){
-        const session=event.data.object;
-        const userId=Number(session.metadata?.user_id);
-        const pkg=await env.DB.prepare(
+      if (
+        event.type === 'checkout.session.completed' &&
+        event.data.object.payment_status === 'paid'
+      ) {
+        const session = event.data.object;
+        const userId = Number(session.metadata?.user_id);
+
+        const pkg = await env.DB.prepare(
           'SELECT * FROM coin_packages WHERE id=? AND active=1'
-        ).bind(session.metadata?.package_id||'').first();
+        ).bind(session.metadata?.package_id || '').first();
 
-        if(
+        if (
           !userId ||
           !pkg ||
-          session.currency!=='gbp' ||
-          Number(session.amount_total)!==Number(pkg.price_pence)
-        ) return fail('Stripe purchase details do not match.',400);
+          session.currency !== 'gbp' ||
+          Number(session.amount_total) !== Number(pkg.price_pence)
+        ) {
+          return fail('Stripe purchase details do not match.', 400);
+        }
 
         await transfer(
           env.DB,
@@ -176,45 +304,51 @@ export async function onRequest(context) {
           session.id,
           `stripe:${session.id}`,
           JSON.stringify({
-            amount_total:session.amount_total,
-            currency:session.currency
+            amount_total: session.amount_total,
+            currency: session.currency
           })
         );
       }
 
-      return json({received:true});
+      return json({ received: true });
     }
 
     if (path === '/auth/signup' && method === 'POST') {
       const d = await body(request);
-      const email=clean(d.email,254).toLowerCase();
-      const name=clean(d.name,30);
-      const dob=clean(d.dob,10);
-      const userAge=age(dob);
+      const email = clean(d.email, 254).toLowerCase();
+      const name = clean(d.name, 30);
+      const dob = clean(d.dob, 10);
+      const userAge = age(dob);
 
       if (
         !/^\S+@\S+\.\S+$/.test(email) ||
-        clean(d.password,200).length < 10 ||
+        clean(d.password, 200).length < 10 ||
         !name ||
         !Number.isFinite(userAge) ||
         userAge < 18 ||
         userAge > 120
-      ) return fail('Valid details, age 18+, and a 10-character password are required.');
+      ) {
+        return fail(
+          'Valid details, age 18+, and a 10-character password are required.'
+        );
+      }
 
       const p = await hashPassword(d.password);
 
       const result = await env.DB.prepare(
-        `INSERT INTO users(email,password_hash,password_salt,name,dob,gender,looking_for,approximate_area)
-         VALUES(?,?,?,?,?,?,?,?)`
+        `INSERT INTO users(
+          email,password_hash,password_salt,name,dob,
+          gender,looking_for,approximate_area
+        ) VALUES(?,?,?,?,?,?,?,?)`
       ).bind(
         email,
         p.hash,
         p.salt,
         name,
         dob,
-        clean(d.gender,30),
-        clean(d.lookingFor,30),
-        clean(d.area,80)
+        clean(d.gender, 30),
+        clean(d.lookingFor, 30),
+        clean(d.area, 80)
       ).run();
 
       await env.DB.prepare(
@@ -231,76 +365,93 @@ export async function onRequest(context) {
         `welcome:${result.meta.last_row_id}`
       );
 
-      const s=await createSession(result.meta.last_row_id,env);
+      const s = await createSession(result.meta.last_row_id, env);
 
       return json({
-        ok:true,
-        user:{
-          id:result.meta.last_row_id,
+        ok: true,
+        user: {
+          id: result.meta.last_row_id,
           name,
           email,
-          role:'user'
+          role: 'user'
         }
-      },201,{'set-cookie':sessionCookie(s.token,s.days)});
+      }, 201, {
+        'set-cookie': sessionCookie(s.token, s.days)
+      });
     }
 
     if (path === '/auth/login' && method === 'POST') {
-      const d=await body(request);
-      const user=await env.DB.prepare(
+      const d = await body(request);
+
+      const user = await env.DB.prepare(
         'SELECT * FROM users WHERE email=? COLLATE NOCASE'
-      ).bind(clean(d.email,254)).first();
+      ).bind(clean(d.email, 254)).first();
 
-      if (!user) return fail('Email or password is incorrect.',401);
+      if (!user) {
+        return fail('Email or password is incorrect.', 401);
+      }
 
-      const p=await hashPassword(clean(d.password,200),user.password_salt);
-      if(!secureEqual(p.hash,user.password_hash)) return fail('Email or password is incorrect.',401);
-      if(user.status!=='active') return fail('This account is suspended.',403);
+      const p = await hashPassword(
+        clean(d.password, 200),
+        user.password_salt
+      );
 
-      const s=await createSession(user.id,env);
+      if (!secureEqual(p.hash, user.password_hash)) {
+        return fail('Email or password is incorrect.', 401);
+      }
+
+      if (user.status !== 'active') {
+        return fail('This account is suspended.', 403);
+      }
+
+      const s = await createSession(user.id, env);
 
       return json({
-        ok:true,
-        user:{
-          id:user.id,
-          name:user.name,
-          email:user.email,
-          role:user.role
+        ok: true,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role
         }
-      },200,{'set-cookie':sessionCookie(s.token,s.days)});
+      }, 200, {
+        'set-cookie': sessionCookie(s.token, s.days)
+      });
     }
 
     if (path === '/auth/logout' && method === 'POST') {
-      const token=cookie(request).nv_session;
-      if(token) {
+      const token = cookie(request).nv_session;
+
+      if (token) {
         await env.DB.prepare(
           'DELETE FROM sessions WHERE token_hash=?'
         ).bind(await sha256(token)).run();
       }
 
-      return json(
-        {ok:true},
-        200,
-        {'set-cookie':'nv_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0'}
-      );
+      return json({ ok: true }, 200, {
+        'set-cookie': 'nv_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0'
+      });
     }
 
-    const user = await requireUser(request,env);
+    const user = await requireUser(request, env);
 
-    if(path==='/admin/bootstrap'&&method==='POST'){
-      const configured=await env.DB.prepare(
+    if (path === '/admin/bootstrap' && method === 'POST') {
+      const configured = await env.DB.prepare(
         `SELECT COUNT(*) AS total FROM users WHERE role='admin'`
       ).first();
 
-      if(Number(configured?.total||0)>0) {
-        return fail('Admin is already configured.',409);
+      if (Number(configured?.total || 0) > 0) {
+        return fail('Admin is already configured.', 409);
       }
 
-      const d=await body(request);
+      const d = await body(request);
 
-      if(
+      if (
         !env.ADMIN_SETUP_TOKEN ||
-        !secureEqual(clean(d.token,200),env.ADMIN_SETUP_TOKEN)
-      ) return fail('Invalid setup token.',403);
+        !secureEqual(clean(d.token, 200), env.ADMIN_SETUP_TOKEN)
+      ) {
+        return fail('Invalid setup token.', 403);
+      }
 
       await env.DB.prepare(
         `UPDATE users SET role='admin' WHERE id=?`
@@ -309,118 +460,135 @@ export async function onRequest(context) {
       await env.DB.prepare(
         `INSERT INTO audit_log(actor_id,action,target_type,target_id)
          VALUES(?,'admin_bootstrap','user',?)`
-      ).bind(user.id,String(user.id)).run();
+      ).bind(user.id, String(user.id)).run();
 
-      return json({ok:true,role:'admin'});
+      return json({ ok: true, role: 'admin' });
     }
 
     if (path === '/me' && method === 'GET') {
-      const [w,v]=await Promise.all([
-        env.DB.prepare('SELECT balance FROM wallets WHERE user_id=?').bind(user.id).first(),
-        env.DB.prepare('SELECT status FROM verification_requests WHERE user_id=? ORDER BY id DESC LIMIT 1').bind(user.id).first()
+      const [w, v] = await Promise.all([
+        env.DB.prepare(
+          'SELECT balance FROM wallets WHERE user_id=?'
+        ).bind(user.id).first(),
+
+        env.DB.prepare(
+          `SELECT status FROM verification_requests
+           WHERE user_id=?
+           ORDER BY id DESC
+           LIMIT 1`
+        ).bind(user.id).first()
       ]);
 
       return json({
-        ok:true,
-        user:{
+        ok: true,
+        user: {
           ...user,
-          password_hash:undefined,
-          password_salt:undefined,
-          balance:w?.balance||0,
-          verification_status:v?.status||user.adult_status||'unverified'
+          password_hash: undefined,
+          password_salt: undefined,
+          balance: w?.balance || 0,
+          verification_status:
+            v?.status || user.adult_status || 'unverified'
         }
       });
     }
 
     if (path === '/me' && method === 'PATCH') {
-      const d=await body(request);
-      const callPrice=Number(d.callPrice??user.call_price);
+      const d = await body(request);
+      const callPrice = Number(d.callPrice ?? user.call_price);
 
-      if(
+      if (
         !Number.isFinite(callPrice) ||
-        callPrice<5 ||
-        callPrice>500
-      ) return fail('Choose a call price from 5 to 500 coins.');
+        callPrice < 5 ||
+        callPrice > 500
+      ) {
+        return fail('Choose a call price from 5 to 500 coins.');
+      }
 
       await env.DB.prepare(
         `UPDATE users
-         SET name=?,bio=?,gender=?,looking_for=?,approximate_area=?,call_price=?,updated_at=CURRENT_TIMESTAMP
+         SET name=?,bio=?,gender=?,looking_for=?,
+             approximate_area=?,call_price=?,
+             updated_at=CURRENT_TIMESTAMP
          WHERE id=?`
       ).bind(
-        clean(d.name||user.name,30),
-        clean(d.bio,500),
-        clean(d.gender||user.gender,30),
-        clean(d.lookingFor||user.looking_for,30),
-        clean(d.area,80),
+        clean(d.name || user.name, 30),
+        clean(d.bio, 500),
+        clean(d.gender || user.gender, 30),
+        clean(d.lookingFor || user.looking_for, 30),
+        clean(d.area, 80),
         Math.round(callPrice),
         user.id
       ).run();
 
       await env.DB.prepare(
         `UPDATE users
-         SET paid_call_eligible=CASE
-           WHEN adult_status='verified'
-           AND photo_data IS NOT NULL
-           AND LENGTH(TRIM(bio))>=20
-           THEN 1 ELSE 0 END
+         SET paid_call_eligible=
+           CASE
+             WHEN adult_status='verified'
+              AND photo_data IS NOT NULL
+              AND LENGTH(TRIM(bio))>=20
+             THEN 1
+             ELSE 0
+           END
          WHERE id=?`
       ).bind(user.id).run();
 
-      return json({ok:true});
+      return json({ ok: true });
     }
 
     if (path === '/me/photo' && method === 'POST') {
-      const d=await body(request);
-      const photo=String(d.photo||'');
+      const d = await body(request);
+      const photo = String(d.photo || '');
 
-      if(
+      if (
         !/^data:image\/(jpeg|png|webp);base64,/.test(photo) ||
-        photo.length>2800000
-      ) return fail('Use a JPEG, PNG or WebP under 2 MB.');
-
-      await env.DB.prepare(
-        'UPDATE users SET photo_data=?,updated_at=CURRENT_TIMESTAMP WHERE id=?'
-      ).bind(photo,user.id).run();
+        photo.length > 2800000
+      ) {
+        return fail('Use a JPEG, PNG or WebP under 2 MB.');
+      }
 
       await env.DB.prepare(
         `UPDATE users
-         SET paid_call_eligible=CASE
-           WHEN adult_status='verified'
-           AND photo_data IS NOT NULL
-           AND LENGTH(TRIM(bio))>=20
-           THEN 1 ELSE 0 END
+         SET photo_data=?,updated_at=CURRENT_TIMESTAMP
+         WHERE id=?`
+      ).bind(photo, user.id).run();
+
+      await env.DB.prepare(
+        `UPDATE users
+         SET paid_call_eligible=
+           CASE
+             WHEN adult_status='verified'
+              AND photo_data IS NOT NULL
+              AND LENGTH(TRIM(bio))>=20
+             THEN 1
+             ELSE 0
+           END
          WHERE id=?`
       ).bind(user.id).run();
 
-      return json({ok:true});
+      return json({ ok: true });
     }
 
     if (path === '/profiles' && method === 'GET') {
-      const community=await env.DB.prepare(
+      const community = await env.DB.prepare(
         `SELECT COUNT(*) AS total
          FROM users
          WHERE status='active' AND is_demo=0`
       ).first();
 
-      const threshold=Math.max(
+      const threshold = Math.max(
         1,
-        Number(env.REAL_DISCOVERY_MIN_USERS||100)
+        Number(env.REAL_DISCOVERY_MIN_USERS || 100)
       );
 
-      const showReal=Number(community?.total||0)>=threshold;
+      const showReal = Number(community?.total || 0) >= threshold;
 
-      const rows=await env.DB.prepare(
+      const rows = await env.DB.prepare(
         `SELECT
-           id,
-           name,
-           CAST((julianday('now')-julianday(dob))/365.2425 AS INTEGER) age,
-           bio,
-           approximate_area,
-           photo_data,
-           is_ai,
-           is_demo,
-           adult_status,
-           call_price
+          id,name,
+          CAST((julianday('now')-julianday(dob))/365.2425 AS INTEGER) age,
+          bio,approximate_area,photo_data,is_ai,is_demo,
+          adult_status,call_price
          FROM users
          WHERE id<>?
            AND status='active'
@@ -435,109 +603,116 @@ export async function onRequest(context) {
          LIMIT 50`
       ).bind(
         user.id,
-        showReal?1:0,
+        showReal ? 1 : 0,
         user.id,
         user.id
       ).all();
 
       return json({
-        ok:true,
-        profiles:rows.results,
-        discoveryMode:showReal?'community':'ai_demo',
-        realUsers:Number(community?.total||0),
-        realDiscoveryThreshold:threshold
+        ok: true,
+        profiles: rows.results,
+        discoveryMode: showReal ? 'community' : 'ai_demo',
+        realUsers: Number(community?.total || 0),
+        realDiscoveryThreshold: threshold
       });
     }
 
-    if (/^\/profiles\/\d+\/like$/.test(path) && method==='POST') {
-      const target=Number(path.split('/')[2]);
+    if (/^\/profiles\/\d+\/like$/.test(path) && method === 'POST') {
+      const target = Number(path.split('/')[2]);
 
-      if(target===user.id) return fail('Cannot like yourself.');
+      if (target === user.id) {
+        return fail('Cannot like yourself.');
+      }
 
-      const targetUser=await env.DB.prepare(
-        `SELECT id,is_ai,is_demo FROM users
+      const targetUser = await env.DB.prepare(
+        `SELECT id,is_ai,is_demo
+         FROM users
          WHERE id=? AND status='active'`
       ).bind(target).first();
 
-      if(!targetUser) return fail('Profile not found.',404);
-
-      await env.DB.prepare(
-        'INSERT OR IGNORE INTO likes(from_user_id,to_user_id) VALUES(?,?)'
-      ).bind(user.id,target).run();
-
-      if(targetUser.is_ai&&targetUser.is_demo) {
-        await env.DB.prepare(
-          'INSERT OR IGNORE INTO likes(from_user_id,to_user_id) VALUES(?,?)'
-        ).bind(target,user.id).run();
+      if (!targetUser) {
+        return fail('Profile not found.', 404);
       }
 
-      const mutual=await env.DB.prepare(
-        'SELECT 1 FROM likes WHERE from_user_id=? AND to_user_id=?'
-      ).bind(target,user.id).first();
+      await env.DB.prepare(
+        `INSERT OR IGNORE INTO likes(from_user_id,to_user_id)
+         VALUES(?,?)`
+      ).bind(user.id, target).run();
 
-      let match=null;
+      if (targetUser.is_ai && targetUser.is_demo) {
+        await env.DB.prepare(
+          `INSERT OR IGNORE INTO likes(from_user_id,to_user_id)
+           VALUES(?,?)`
+        ).bind(target, user.id).run();
+      }
 
-      if(mutual){
-        const a=Math.min(user.id,target);
-        const b=Math.max(user.id,target);
+      const mutual = await env.DB.prepare(
+        `SELECT 1 FROM likes
+         WHERE from_user_id=? AND to_user_id=?`
+      ).bind(target, user.id).first();
+
+      let match = null;
+
+      if (mutual) {
+        const a = Math.min(user.id, target);
+        const b = Math.max(user.id, target);
 
         await env.DB.prepare(
-          'INSERT OR IGNORE INTO matches(user_a,user_b) VALUES(?,?)'
-        ).bind(a,b).run();
+          `INSERT OR IGNORE INTO matches(user_a,user_b)
+           VALUES(?,?)`
+        ).bind(a, b).run();
 
-        match=await isMatched(env.DB,user.id,target);
+        match = await isMatched(env.DB, user.id, target);
       }
 
       return json({
-        ok:true,
-        matched:!!mutual,
+        ok: true,
+        matched: !!mutual,
         match
       });
     }
 
-    if (path==='/matches'&&method==='GET') {
-      const rows=await env.DB.prepare(
+    if (path === '/matches' && method === 'GET') {
+      const rows = await env.DB.prepare(
         `SELECT
-           m.id,
-           u.id user_id,
-           u.name,
-           u.photo_data,
-           u.is_ai,
-           u.call_price,
-           m.created_at,
-           (
-             SELECT msg.id
-             FROM messages msg
-             WHERE msg.match_id=m.id
-             ORDER BY msg.id DESC
-             LIMIT 1
-           ) latest_message_id,
-           (
-             SELECT msg.body
-             FROM messages msg
-             WHERE msg.match_id=m.id
-             ORDER BY msg.id DESC
-             LIMIT 1
-           ) latest_message,
-           (
-             SELECT msg.sender_id
-             FROM messages msg
-             WHERE msg.match_id=m.id
-             ORDER BY msg.id DESC
-             LIMIT 1
-           ) latest_sender_id,
-           (
-             SELECT msg.created_at
-             FROM messages msg
-             WHERE msg.match_id=m.id
-             ORDER BY msg.id DESC
-             LIMIT 1
-           ) latest_message_at
+          m.id,
+          u.id user_id,
+          u.name,
+          u.photo_data,
+          u.is_ai,
+          u.call_price,
+          m.created_at,
+          (
+            SELECT msg.id
+            FROM messages msg
+            WHERE msg.match_id=m.id
+            ORDER BY msg.id DESC
+            LIMIT 1
+          ) latest_message_id,
+          (
+            SELECT msg.body
+            FROM messages msg
+            WHERE msg.match_id=m.id
+            ORDER BY msg.id DESC
+            LIMIT 1
+          ) latest_message,
+          (
+            SELECT msg.sender_id
+            FROM messages msg
+            WHERE msg.match_id=m.id
+            ORDER BY msg.id DESC
+            LIMIT 1
+          ) latest_sender_id,
+          (
+            SELECT msg.created_at
+            FROM messages msg
+            WHERE msg.match_id=m.id
+            ORDER BY msg.id DESC
+            LIMIT 1
+          ) latest_message_at
          FROM matches m
-         JOIN users u ON u.id=CASE
-           WHEN m.user_a=? THEN m.user_b
-           ELSE m.user_a
-         END
+         JOIN users u ON u.id=
+           CASE WHEN m.user_a=? THEN m.user_b ELSE m.user_a END
          WHERE (m.user_a=? OR m.user_b=?)
            AND u.status='active'
            AND u.id NOT IN (
@@ -556,30 +731,32 @@ export async function onRequest(context) {
       ).all();
 
       return json({
-        ok:true,
-        matches:rows.results
+        ok: true,
+        matches: rows.results
       });
     }
 
     if (/^\/matches\/\d+\/messages$/.test(path)) {
-      const matchId=Number(path.split('/')[2]);
+      const matchId = Number(path.split('/')[2]);
 
-      const match=await env.DB.prepare(
-        'SELECT * FROM matches WHERE id=? AND (user_a=? OR user_b=?)'
-      ).bind(matchId,user.id,user.id).first();
+      const match = await env.DB.prepare(
+        `SELECT * FROM matches
+         WHERE id=? AND (user_a=? OR user_b=?)`
+      ).bind(matchId, user.id, user.id).first();
 
-      if(!match) return fail('Match not found.',404);
-
-      const otherId=match.user_a===user.id
-        ? match.user_b
-        : match.user_a;
-
-      if(await isBlocked(env.DB,user.id,otherId)) {
-        return fail('This conversation is blocked.',403);
+      if (!match) {
+        return fail('Match not found.', 404);
       }
 
-      if(method==='GET'){
-        const rows=await env.DB.prepare(
+      const otherId =
+        match.user_a === user.id ? match.user_b : match.user_a;
+
+      if (await isBlocked(env.DB, user.id, otherId)) {
+        return fail('This conversation is blocked.', 403);
+      }
+
+      if (method === 'GET') {
+        const rows = await env.DB.prepare(
           `SELECT id,sender_id,body,kind,gift_id,created_at
            FROM messages
            WHERE match_id=?
@@ -588,60 +765,71 @@ export async function onRequest(context) {
         ).bind(matchId).all();
 
         return json({
-          ok:true,
-          messages:rows.results
+          ok: true,
+          messages: rows.results
         });
       }
 
-      if(method==='POST'){
-        const d=await body(request);
-        const text=clean(d.body,1000);
+      if (method === 'POST') {
+        const d = await body(request);
+        const text = clean(d.body, 1000);
 
-        if(!text) return fail('Message is empty.');
+        if (!text) {
+          return fail('Message is empty.');
+        }
 
-        const r=await env.DB.prepare(
-          'INSERT INTO messages(match_id,sender_id,body) VALUES(?,?,?)'
-        ).bind(matchId,user.id,text).run();
+        const r = await env.DB.prepare(
+          `INSERT INTO messages(match_id,sender_id,body)
+           VALUES(?,?,?)`
+        ).bind(matchId, user.id, text).run();
 
-        const other=await env.DB.prepare(
-          'SELECT id,name,is_ai,is_demo FROM users WHERE id=?'
+        const other = await env.DB.prepare(
+          `SELECT id,name,is_ai,is_demo
+           FROM users
+           WHERE id=?`
         ).bind(otherId).first();
 
-        let aiReply=false;
+        let aiReply = false;
 
-        if(other?.is_ai&&other?.is_demo){
-          const replies=[
+        if (other?.is_ai && other?.is_demo) {
+          const replies = [
             `Hi ${user.name}! I’m a clearly labelled AI demo profile. Thanks for testing NearVibe 👋`,
             `That sounds good. I’m an AI demo, so please don’t share personal or financial information with me.`,
             `Thanks for the message! This reply is generated by NearVibe’s safe demo system.`
           ];
 
-          const reply=replies[r.meta.last_row_id%replies.length];
+          const reply = replies[
+            r.meta.last_row_id % replies.length
+          ];
 
           await env.DB.prepare(
-            `INSERT INTO messages(match_id,sender_id,body,kind)
-             VALUES(?,?,?,'ai_demo')`
-          ).bind(matchId,otherId,reply).run();
+            `INSERT INTO messages(
+              match_id,sender_id,body,kind
+            ) VALUES(?,?,?,'ai_demo')`
+          ).bind(matchId, otherId, reply).run();
 
-          aiReply=true;
+          aiReply = true;
         }
 
         return json({
-          ok:true,
-          id:r.meta.last_row_id,
+          ok: true,
+          id: r.meta.last_row_id,
           aiReply
-        },201);
+        }, 201);
       }
     }
 
-    if(path==='/wallet'&&method==='GET'){
-      const [w,l,p,g,e,el]=await Promise.all([
+    if (path === '/wallet' && method === 'GET') {
+      const [w, l, p, g, e, el] = await Promise.all([
         env.DB.prepare(
           'SELECT balance FROM wallets WHERE user_id=?'
         ).bind(user.id).first(),
 
         env.DB.prepare(
-          'SELECT * FROM coin_transactions WHERE user_id=? ORDER BY id DESC LIMIT 50'
+          `SELECT * FROM coin_transactions
+           WHERE user_id=?
+           ORDER BY id DESC
+           LIMIT 50`
         ).bind(user.id).all(),
 
         env.DB.prepare(
@@ -653,83 +841,99 @@ export async function onRequest(context) {
         ).all(),
 
         env.DB.prepare(
-          'SELECT available_pence,pending_pence,lifetime_pence FROM creator_earnings WHERE user_id=?'
+          `SELECT available_pence,pending_pence,lifetime_pence
+           FROM creator_earnings
+           WHERE user_id=?`
         ).bind(user.id).first(),
 
         env.DB.prepare(
-          'SELECT * FROM earning_transactions WHERE user_id=? ORDER BY id DESC LIMIT 50'
+          `SELECT * FROM earning_transactions
+           WHERE user_id=?
+           ORDER BY id DESC
+           LIMIT 50`
         ).bind(user.id).all()
       ]);
 
       return json({
-        ok:true,
-        balance:w?.balance||0,
-        ledger:l.results,
-        packages:p.results,
-        gifts:g.results,
-        earnings:{
-          availablePence:Number(e?.available_pence||0),
-          pendingPence:Number(e?.pending_pence||0),
-          lifetimePence:Number(e?.lifetime_pence||0),
-          currency:'gbp',
-          withdrawalsEnabled:false,
-          requiresVerification:true
+        ok: true,
+        balance: w?.balance || 0,
+        ledger: l.results,
+        packages: p.results,
+        gifts: g.results,
+        earnings: {
+          availablePence: Number(e?.available_pence || 0),
+          pendingPence: Number(e?.pending_pence || 0),
+          lifetimePence: Number(e?.lifetime_pence || 0),
+          currency: 'gbp',
+          withdrawalsEnabled: false,
+          requiresVerification: true
         },
-        earningLedger:el.results
+        earningLedger: el.results
       });
     }
 
-    if(path==='/earnings'&&method==='GET'){
-      const [e,l]=await Promise.all([
+    if (path === '/earnings' && method === 'GET') {
+      const [e, l] = await Promise.all([
         env.DB.prepare(
-          'SELECT available_pence,pending_pence,lifetime_pence FROM creator_earnings WHERE user_id=?'
+          `SELECT available_pence,pending_pence,lifetime_pence
+           FROM creator_earnings
+           WHERE user_id=?`
         ).bind(user.id).first(),
 
         env.DB.prepare(
-          'SELECT * FROM earning_transactions WHERE user_id=? ORDER BY id DESC LIMIT 100'
+          `SELECT * FROM earning_transactions
+           WHERE user_id=?
+           ORDER BY id DESC
+           LIMIT 100`
         ).bind(user.id).all()
       ]);
 
       return json({
-        ok:true,
-        availablePence:Number(e?.available_pence||0),
-        pendingPence:Number(e?.pending_pence||0),
-        lifetimePence:Number(e?.lifetime_pence||0),
-        currency:'gbp',
-        transactions:l.results,
-        withdrawalsEnabled:false,
-        message:'Withdrawals unlock after identity verification and Stripe Connect onboarding.'
+        ok: true,
+        availablePence: Number(e?.available_pence || 0),
+        pendingPence: Number(e?.pending_pence || 0),
+        lifetimePence: Number(e?.lifetime_pence || 0),
+        currency: 'gbp',
+        transactions: l.results,
+        withdrawalsEnabled: false,
+        message:
+          'Withdrawals unlock after identity verification and Stripe Connect onboarding.'
       });
     }
 
-    if(/^\/matches\/\d+\/gifts$/.test(path)&&method==='POST'){
-      const matchId=Number(path.split('/')[2]);
+    if (/^\/matches\/\d+\/gifts$/.test(path) && method === 'POST') {
+      const matchId = Number(path.split('/')[2]);
 
-      const m=await env.DB.prepare(
-        'SELECT * FROM matches WHERE id=? AND (user_a=? OR user_b=?)'
-      ).bind(matchId,user.id,user.id).first();
+      const m = await env.DB.prepare(
+        `SELECT * FROM matches
+         WHERE id=? AND (user_a=? OR user_b=?)`
+      ).bind(matchId, user.id, user.id).first();
 
-      if(!m) return fail('Match not found.',404);
-
-      const recipient=m.user_a===user.id
-        ? m.user_b
-        : m.user_a;
-
-      if(await isBlocked(env.DB,user.id,recipient)) {
-        return fail('This conversation is blocked.',403);
+      if (!m) {
+        return fail('Match not found.', 404);
       }
 
-      const d=await body(request);
+      const recipient =
+        m.user_a === user.id ? m.user_b : m.user_a;
 
-      const gift=await env.DB.prepare(
-        'SELECT * FROM gifts WHERE id=? AND active=1'
-      ).bind(clean(d.giftId,30)).first();
+      if (await isBlocked(env.DB, user.id, recipient)) {
+        return fail('This conversation is blocked.', 403);
+      }
 
-      if(!gift) return fail('Gift not found.',404);
+      const d = await body(request);
 
-      const idem=`gift:${user.id}:${crypto.randomUUID()}`;
+      const gift = await env.DB.prepare(
+        `SELECT * FROM gifts
+         WHERE id=? AND active=1`
+      ).bind(clean(d.giftId, 30)).first();
 
-      const bal=await transfer(
+      if (!gift) {
+        return fail('Gift not found.', 404);
+      }
+
+      const idem = `gift:${user.id}:${crypto.randomUUID()}`;
+
+      const bal = await transfer(
         env.DB,
         user.id,
         -gift.coin_cost,
@@ -738,14 +942,15 @@ export async function onRequest(context) {
         String(matchId),
         idem,
         JSON.stringify({
-          giftId:gift.id,
+          giftId: gift.id,
           recipient
         })
       );
 
-      const message=await env.DB.prepare(
-        `INSERT INTO messages(match_id,sender_id,body,kind,gift_id)
-         VALUES(?,?,?,?,?)`
+      const message = await env.DB.prepare(
+        `INSERT INTO messages(
+          match_id,sender_id,body,kind,gift_id
+        ) VALUES(?,?,?,?,?)`
       ).bind(
         matchId,
         user.id,
@@ -754,12 +959,14 @@ export async function onRequest(context) {
         gift.id
       ).run();
 
-      const recipientUser=await env.DB.prepare(
-        'SELECT is_ai,is_demo FROM users WHERE id=?'
+      const recipientUser = await env.DB.prepare(
+        `SELECT is_ai,is_demo
+         FROM users
+         WHERE id=?`
       ).bind(recipient).first();
 
-      const earnedPence=
-        recipientUser?.is_ai&&recipientUser?.is_demo
+      const earnedPence =
+        recipientUser?.is_ai && recipientUser?.is_demo
           ? 0
           : await creditCreatorEarnings(
               env.DB,
@@ -771,18 +978,18 @@ export async function onRequest(context) {
             );
 
       return json({
-        ok:true,
-        balance:bal,
-        recipientEarnedPence:earnedPence
+        ok: true,
+        balance: bal,
+        recipientEarnedPence: earnedPence
       });
     }
 
-    if(path==='/call-offers'&&method==='GET'){
-      const rows=await env.DB.prepare(
+    if (path === '/call-offers' && method === 'GET') {
+      const rows = await env.DB.prepare(
         `SELECT
-           o.*,
-           p.name proposer_name,
-           r.name recipient_name
+          o.*,
+          p.name proposer_name,
+          r.name recipient_name
          FROM call_offers o
          JOIN users p ON p.id=o.proposer_id
          JOIN users r ON r.id=o.recipient_id
@@ -791,78 +998,90 @@ export async function onRequest(context) {
            AND o.status='pending'
          ORDER BY o.id DESC
          LIMIT 50`
-      ).bind(user.id,user.id).all();
+      ).bind(user.id, user.id).all();
 
       return json({
-        ok:true,
-        offers:rows.results
+        ok: true,
+        offers: rows.results
       });
     }
 
-    if(/^\/matches\/\d+\/call-offers$/.test(path)&&method==='POST'){
-      const matchId=Number(path.split('/')[2]);
+    if (/^\/matches\/\d+\/call-offers$/.test(path) && method === 'POST') {
+      const matchId = Number(path.split('/')[2]);
 
-      const m=await env.DB.prepare(
-        'SELECT * FROM matches WHERE id=? AND (user_a=? OR user_b=?)'
-      ).bind(matchId,user.id,user.id).first();
+      const m = await env.DB.prepare(
+        `SELECT * FROM matches
+         WHERE id=? AND (user_a=? OR user_b=?)`
+      ).bind(matchId, user.id, user.id).first();
 
-      if(!m) return fail('Match not found.',404);
-
-      const recipient=m.user_a===user.id
-        ? m.user_b
-        : m.user_a;
-
-      if(await isBlocked(env.DB,user.id,recipient)) {
-        return fail('This conversation is blocked.',403);
+      if (!m) {
+        return fail('Match not found.', 404);
       }
 
-      const d=await body(request);
-      const requestedRate=Number(d.rate);
+      const recipient =
+        m.user_a === user.id ? m.user_b : m.user_a;
 
-      if(
+      if (await isBlocked(env.DB, user.id, recipient)) {
+        return fail('This conversation is blocked.', 403);
+      }
+
+      const d = await body(request);
+      const requestedRate = Number(d.rate);
+
+      if (
         !Number.isFinite(requestedRate) ||
-        requestedRate<5 ||
-        requestedRate>500
-      ) return fail('Choose a call rate from 5 to 500 coins.');
+        requestedRate < 5 ||
+        requestedRate > 500
+      ) {
+        return fail('Choose a call rate from 5 to 500 coins.');
+      }
 
-      const rate=Math.round(requestedRate);
+      const rate = Math.round(requestedRate);
 
-      const recipientUser=await env.DB.prepare(
-        'SELECT is_ai,is_demo,paid_call_eligible FROM users WHERE id=?'
+      const recipientUser = await env.DB.prepare(
+        `SELECT is_ai,is_demo,paid_call_eligible
+         FROM users
+         WHERE id=?`
       ).bind(recipient).first();
 
-      if(!recipientUser) return fail('Account not found.',404);
+      if (!recipientUser) {
+        return fail('Account not found.', 404);
+      }
 
-      if(
-        !(recipientUser.is_ai&&recipientUser.is_demo) &&
+      if (
+        !(recipientUser.is_ai && recipientUser.is_demo) &&
         !recipientUser.paid_call_eligible
-      ) return fail('This member is not yet eligible for paid calls.',403);
+      ) {
+        return fail(
+          'This member is not yet eligible for paid calls.',
+          403
+        );
+      }
 
-      const r=await env.DB.prepare(
+      const r = await env.DB.prepare(
         `INSERT INTO call_offers(
-           match_id,
-           proposer_id,
-           recipient_id,
-           coins_per_minute,
-           parent_offer_id
-         ) VALUES(?,?,?,?,?)`
+          match_id,proposer_id,recipient_id,
+          coins_per_minute,parent_offer_id
+        ) VALUES(?,?,?,?,?)`
       ).bind(
         matchId,
         user.id,
         recipient,
         rate,
-        d.parentOfferId||null
+        d.parentOfferId || null
       ).run();
 
-      if(recipientUser.is_ai&&recipientUser.is_demo){
+      if (recipientUser.is_ai && recipientUser.is_demo) {
         await env.DB.prepare(
           `UPDATE call_offers
            SET status='accepted',responded_at=CURRENT_TIMESTAMP
            WHERE id=?`
         ).bind(r.meta.last_row_id).run();
 
-        const call=await env.DB.prepare(
-          'INSERT INTO calls(match_id,payer_id,recipient_id,rate) VALUES(?,?,?,?)'
+        const call = await env.DB.prepare(
+          `INSERT INTO calls(
+            match_id,payer_id,recipient_id,rate
+          ) VALUES(?,?,?,?)`
         ).bind(
           matchId,
           user.id,
@@ -871,41 +1090,45 @@ export async function onRequest(context) {
         ).run();
 
         return json({
-          ok:true,
-          id:r.meta.last_row_id,
+          ok: true,
+          id: r.meta.last_row_id,
           rate,
-          accepted:true,
-          callId:call.meta.last_row_id
-        },201);
+          accepted: true,
+          callId: call.meta.last_row_id
+        }, 201);
       }
 
       return json({
-        ok:true,
-        id:r.meta.last_row_id,
+        ok: true,
+        id: r.meta.last_row_id,
         rate,
-        accepted:false
-      },201);
+        accepted: false
+      }, 201);
     }
 
-    if(/^\/call-offers\/\d+\/(accept|decline|counter)$/.test(path)&&method==='POST'){
-      const [, ,id,action]=path.split('/');
+    if (/^\/call-offers\/\d+\/(accept|decline|counter)$/.test(path) && method === 'POST') {
+      const [, , id, action] = path.split('/');
 
-      const offer=await env.DB.prepare(
+      const offer = await env.DB.prepare(
         `SELECT * FROM call_offers
          WHERE id=? AND recipient_id=? AND status='pending'`
-      ).bind(Number(id),user.id).first();
+      ).bind(Number(id), user.id).first();
 
-      if(!offer) return fail('Offer not found.',404);
+      if (!offer) {
+        return fail('Offer not found.', 404);
+      }
 
-      if(action==='counter'){
-        const d=await body(request);
-        const rate=Number(d.rate);
+      if (action === 'counter') {
+        const d = await body(request);
+        const rate = Number(d.rate);
 
-        if(
+        if (
           !Number.isFinite(rate) ||
-          rate<5 ||
-          rate>500
-        ) return fail('Choose a call rate from 5 to 500 coins.');
+          rate < 5 ||
+          rate > 500
+        ) {
+          return fail('Choose a call rate from 5 to 500 coins.');
+        }
 
         await env.DB.prepare(
           `UPDATE call_offers
@@ -913,14 +1136,11 @@ export async function onRequest(context) {
            WHERE id=?`
         ).bind(offer.id).run();
 
-        const r=await env.DB.prepare(
+        const r = await env.DB.prepare(
           `INSERT INTO call_offers(
-             match_id,
-             proposer_id,
-             recipient_id,
-             coins_per_minute,
-             parent_offer_id
-           ) VALUES(?,?,?,?,?)`
+            match_id,proposer_id,recipient_id,
+            coins_per_minute,parent_offer_id
+          ) VALUES(?,?,?,?,?)`
         ).bind(
           offer.match_id,
           user.id,
@@ -930,8 +1150,8 @@ export async function onRequest(context) {
         ).run();
 
         return json({
-          ok:true,
-          id:r.meta.last_row_id
+          ok: true,
+          id: r.meta.last_row_id
         });
       }
 
@@ -940,30 +1160,35 @@ export async function onRequest(context) {
          SET status=?,responded_at=CURRENT_TIMESTAMP
          WHERE id=?`
       ).bind(
-        action==='accept'?'accepted':'declined',
+        action === 'accept' ? 'accepted' : 'declined',
         offer.id
       ).run();
 
-      if(action==='decline') return json({ok:true});
+      if (action === 'decline') {
+        return json({ ok: true });
+      }
 
-      let root=offer;
+      let root = offer;
 
-      while(root.parent_offer_id){
-        const parent=await env.DB.prepare(
+      while (root.parent_offer_id) {
+        const parent = await env.DB.prepare(
           'SELECT * FROM call_offers WHERE id=?'
         ).bind(root.parent_offer_id).first();
 
-        if(!parent) break;
-        root=parent;
+        if (!parent) break;
+        root = parent;
       }
 
-      const payerId=root.proposer_id;
-      const recipientId=payerId===offer.proposer_id
-        ? offer.recipient_id
-        : offer.proposer_id;
+      const payerId = root.proposer_id;
+      const recipientId =
+        payerId === offer.proposer_id
+          ? offer.recipient_id
+          : offer.proposer_id;
 
-      const r=await env.DB.prepare(
-        'INSERT INTO calls(match_id,payer_id,recipient_id,rate) VALUES(?,?,?,?)'
+      const r = await env.DB.prepare(
+        `INSERT INTO calls(
+          match_id,payer_id,recipient_id,rate
+        ) VALUES(?,?,?,?)`
       ).bind(
         offer.match_id,
         payerId,
@@ -972,21 +1197,23 @@ export async function onRequest(context) {
       ).run();
 
       return json({
-        ok:true,
-        callId:r.meta.last_row_id,
-        rate:offer.coins_per_minute,
+        ok: true,
+        callId: r.meta.last_row_id,
+        rate: offer.coins_per_minute,
         payerId,
         recipientId
       });
     }
 
-    if(/^\/calls\/\d+\/(tick|end)$/.test(path)&&method==='POST'){
-      const [, ,id,action]=path.split('/');
+    if (/^\/calls\/\d+\/(tick|end)$/.test(path) && method === 'POST') {
+      const [, , id, action] = path.split('/');
 
-      const call=await env.DB.prepare(
+      const call = await env.DB.prepare(
         `SELECT *,
-           CAST((julianday('now')-julianday(last_billed_at))*86400 AS INTEGER)
-           elapsed_seconds
+          CAST(
+            (julianday('now')-julianday(last_billed_at))*86400
+            AS INTEGER
+          ) elapsed_seconds
          FROM calls
          WHERE id=?
            AND (payer_id=? OR recipient_id=?)
@@ -997,31 +1224,35 @@ export async function onRequest(context) {
         user.id
       ).first();
 
-      if(!call) return fail('Active call not found.',404);
+      if (!call) {
+        return fail('Active call not found.', 404);
+      }
 
-      if(action==='end'){
+      if (action === 'end') {
         await env.DB.prepare(
           `UPDATE calls
            SET status='ended',ended_at=CURRENT_TIMESTAMP
            WHERE id=?`
         ).bind(call.id).run();
 
-        return json({ok:true});
+        return json({ ok: true });
       }
 
-      if(user.id!==call.payer_id) {
-        return fail('Only the payer may bill this call.',403);
+      if (user.id !== call.payer_id) {
+        return fail('Only the payer may bill this call.', 403);
       }
 
-      if(
-        call.billed_minutes>0 &&
-        Number(call.elapsed_seconds)<55
-      ) return fail('The next call minute is not due yet.',429);
+      if (
+        call.billed_minutes > 0 &&
+        Number(call.elapsed_seconds) < 55
+      ) {
+        return fail('The next call minute is not due yet.', 429);
+      }
 
-      const minute=call.billed_minutes+1;
-      const idem=`call:${call.id}:minute:${minute}`;
+      const minute = call.billed_minutes + 1;
+      const idem = `call:${call.id}:minute:${minute}`;
 
-      const bal=await transfer(
+      const bal = await transfer(
         env.DB,
         user.id,
         -call.rate,
@@ -1031,16 +1262,18 @@ export async function onRequest(context) {
         idem,
         JSON.stringify({
           minute,
-          recipient_id:call.recipient_id
+          recipient_id: call.recipient_id
         })
       );
 
-      const recipientUser=await env.DB.prepare(
-        'SELECT is_ai,is_demo FROM users WHERE id=?'
+      const recipientUser = await env.DB.prepare(
+        `SELECT is_ai,is_demo
+         FROM users
+         WHERE id=?`
       ).bind(call.recipient_id).first();
 
-      const earnedPence=
-        recipientUser?.is_ai&&recipientUser?.is_demo
+      const earnedPence =
+        recipientUser?.is_ai && recipientUser?.is_demo
           ? 0
           : await creditCreatorEarnings(
               env.DB,
@@ -1055,22 +1288,20 @@ export async function onRequest(context) {
         `UPDATE calls
          SET billed_minutes=?,last_billed_at=CURRENT_TIMESTAMP
          WHERE id=?`
-      ).bind(
-        minute,
-        call.id
-      ).run();
+      ).bind(minute, call.id).run();
 
       return json({
-        ok:true,
-        balance:bal,
-        billedMinutes:minute,
-        hostEarnedPence:earnedPence
+        ok: true,
+        balance: bal,
+        billedMinutes: minute,
+        hostEarnedPence: earnedPence
       });
     }
 
-    if(path==='/me/blocks'&&method==='GET'){
-      const r=await env.DB.prepare(
-        `SELECT u.id,u.name,u.photo_data,b.created_at
+    if (path === '/me/blocks' && method === 'GET') {
+      const r = await env.DB.prepare(
+        `SELECT
+          u.id,u.name,u.photo_data,b.created_at
          FROM blocks b
          JOIN users u ON u.id=b.blocked_id
          WHERE b.blocker_id=?
@@ -1078,40 +1309,45 @@ export async function onRequest(context) {
       ).bind(user.id).all();
 
       return json({
-        ok:true,
-        blocks:r.results
+        ok: true,
+        blocks: r.results
       });
     }
 
-    if(/^\/users\/\d+\/block$/.test(path)&&method==='DELETE'){
-      const target=Number(path.split('/')[2]);
+    if (/^\/users\/\d+\/block$/.test(path) && method === 'DELETE') {
+      const target = Number(path.split('/')[2]);
 
       await env.DB.prepare(
-        'DELETE FROM blocks WHERE blocker_id=? AND blocked_id=?'
-      ).bind(user.id,target).run();
+        `DELETE FROM blocks
+         WHERE blocker_id=? AND blocked_id=?`
+      ).bind(user.id, target).run();
 
-      return json({ok:true});
+      return json({ ok: true });
     }
 
-    if(/^\/users\/\d+\/(report|block)$/.test(path)&&method==='POST'){
-      const [, ,id,action]=path.split('/');
-      const target=Number(id);
+    if (/^\/users\/\d+\/(report|block)$/.test(path) && method === 'POST') {
+      const [, , id, action] = path.split('/');
+      const target = Number(id);
 
-      if(target===user.id) {
+      if (target === user.id) {
         return fail('You cannot report or block yourself.');
       }
 
-      const targetUser=await env.DB.prepare(
+      const targetUser = await env.DB.prepare(
         'SELECT id FROM users WHERE id=?'
       ).bind(target).first();
 
-      if(!targetUser) return fail('Account not found.',404);
+      if (!targetUser) {
+        return fail('Account not found.', 404);
+      }
 
-      if(action==='block'){
+      if (action === 'block') {
         await env.DB.batch([
           env.DB.prepare(
-            'INSERT OR IGNORE INTO blocks(blocker_id,blocked_id) VALUES(?,?)'
-          ).bind(user.id,target),
+            `INSERT OR IGNORE INTO blocks(
+              blocker_id,blocked_id
+            ) VALUES(?,?)`
+          ).bind(user.id, target),
 
           env.DB.prepare(
             `UPDATE calls
@@ -1119,9 +1355,15 @@ export async function onRequest(context) {
              WHERE status='active'
                AND (
                  (payer_id=? AND recipient_id=?)
-                 OR (payer_id=? AND recipient_id=?)
+                 OR
+                 (payer_id=? AND recipient_id=?)
                )`
-          ).bind(user.id,target,target,user.id),
+          ).bind(
+            user.id,
+            target,
+            target,
+            user.id
+          ),
 
           env.DB.prepare(
             `UPDATE call_offers
@@ -1129,42 +1371,50 @@ export async function onRequest(context) {
              WHERE status='pending'
                AND (
                  (proposer_id=? AND recipient_id=?)
-                 OR (proposer_id=? AND recipient_id=?)
+                 OR
+                 (proposer_id=? AND recipient_id=?)
                )`
-          ).bind(user.id,target,target,user.id)
+          ).bind(
+            user.id,
+            target,
+            target,
+            user.id
+          )
         ]);
 
-        return json({ok:true});
+        return json({ ok: true });
       }
 
-      const d=await body(request);
-      const reason=clean(d.reason,100);
+      const d = await body(request);
+      const reason = clean(d.reason, 100);
 
-      if(!reason) return fail('Choose a report reason.');
+      if (!reason) {
+        return fail('Choose a report reason.');
+      }
 
       await env.DB.prepare(
         `INSERT INTO reports(
-           reporter_id,
-           reported_user_id,
-           reason,
-           details
-         ) VALUES(?,?,?,?)`
+          reporter_id,reported_user_id,reason,details
+        ) VALUES(?,?,?,?)`
       ).bind(
         user.id,
         target,
         reason,
-        clean(d.details,1000)
+        clean(d.details, 1000)
       ).run();
 
-      return json({ok:true},201);
+      return json({ ok: true }, 201);
     }
 
-    if(path==='/verification/request'&&method==='POST'){
-      if(user.adult_status==='verified') {
-        return json({ok:true,status:'approved'});
+    if (path === '/verification/request' && method === 'POST') {
+      if (user.adult_status === 'verified') {
+        return json({
+          ok: true,
+          status: 'approved'
+        });
       }
 
-      const existing=await env.DB.prepare(
+      const existing = await env.DB.prepare(
         `SELECT status
          FROM verification_requests
          WHERE user_id=?
@@ -1172,8 +1422,11 @@ export async function onRequest(context) {
          LIMIT 1`
       ).bind(user.id).first();
 
-      if(existing?.status==='pending') {
-        return json({ok:true,status:'pending'});
+      if (existing?.status === 'pending') {
+        return json({
+          ok: true,
+          status: 'pending'
+        });
       }
 
       await env.DB.prepare(
@@ -1182,40 +1435,43 @@ export async function onRequest(context) {
       ).bind(user.id).run();
 
       return json({
-        ok:true,
-        status:'pending'
-      },201);
+        ok: true,
+        status: 'pending'
+      }, 201);
     }
 
-    if(path==='/payments/checkout'&&method==='POST'){
-      if(!env.STRIPE_SECRET_KEY) {
-        return fail('Stripe is not configured yet.',503);
+    if (path === '/payments/checkout' && method === 'POST') {
+      if (!env.STRIPE_SECRET_KEY) {
+        return fail('Stripe is not configured yet.', 503);
       }
 
-      const d=await body(request);
+      const d = await body(request);
 
-      const pkg=await env.DB.prepare(
-        'SELECT * FROM coin_packages WHERE id=? AND active=1'
-      ).bind(clean(d.packageId,30)).first();
+      const pkg = await env.DB.prepare(
+        `SELECT * FROM coin_packages
+         WHERE id=? AND active=1`
+      ).bind(clean(d.packageId, 30)).first();
 
-      if(!pkg) return fail('Package not found.',404);
+      if (!pkg) {
+        return fail('Package not found.', 404);
+      }
 
-      const origin=
-        clean(env.APP_ORIGIN,300).replace(/\/$/,'') ||
+      const origin =
+        clean(env.APP_ORIGIN, 300).replace(/\/$/, '') ||
         new URL(request.url).origin;
 
-      const form=new URLSearchParams({
-        mode:'payment',
-        success_url:`${origin}/app?payment=success`,
-        cancel_url:`${origin}/app?payment=cancelled`,
-        'managed_payments[enabled]':'false',
-        'line_items[0][quantity]':'1',
-        client_reference_id:String(user.id),
-        'metadata[user_id]':String(user.id),
-        'metadata[package_id]':pkg.id
+      const form = new URLSearchParams({
+        mode: 'payment',
+        success_url: `${origin}/app?payment=success`,
+        cancel_url: `${origin}/app?payment=cancelled`,
+        'managed_payments[enabled]': 'false',
+        'line_items[0][quantity]': '1',
+        client_reference_id: String(user.id),
+        'metadata[user_id]': String(user.id),
+        'metadata[package_id]': pkg.id
       });
 
-      if(pkg.stripe_price_id){
+      if (pkg.stripe_price_id) {
         form.set(
           'line_items[0][price]',
           pkg.stripe_price_id
@@ -1237,58 +1493,83 @@ export async function onRequest(context) {
         );
       }
 
-      const response=await fetch(
+      const response = await fetch(
         'https://api.stripe.com/v1/checkout/sessions',
         {
-          method:'POST',
-          headers:{
-            authorization:`Bearer ${env.STRIPE_SECRET_KEY}`,
-            'content-type':'application/x-www-form-urlencoded'
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
+            'content-type': 'application/x-www-form-urlencoded'
           },
-          body:form
+          body: form
         }
       );
 
-      const result=await response.json();
+      const result = await response.json();
 
-      if(!response.ok) {
+      if (!response.ok) {
         return fail(
-          result.error?.message||'Stripe checkout failed.',
+          result.error?.message || 'Stripe checkout failed.',
           502
         );
       }
 
       return json({
-        ok:true,
-        url:result.url
+        ok: true,
+        url: result.url
       });
     }
 
-    if(path.startsWith('/admin/')) {
-      await requireUser(request,env,['admin','moderator']);
+    if (path.startsWith('/admin/')) {
+      await requireUser(
+        request,
+        env,
+        ['admin', 'moderator']
+      );
 
-      if(path==='/admin/overview'&&method==='GET'){
-        const [users,reports,checks,calls]=await Promise.all([
-          env.DB.prepare('SELECT COUNT(*) n FROM users').first(),
-          env.DB.prepare(`SELECT COUNT(*) n FROM reports WHERE status='open'`).first(),
-          env.DB.prepare(`SELECT COUNT(*) n FROM verification_requests WHERE status='pending'`).first(),
-          env.DB.prepare(`SELECT COUNT(*) n FROM calls WHERE status='active'`).first()
-        ]);
+      if (path === '/admin/overview' && method === 'GET') {
+        const [users, reports, checks, calls] =
+          await Promise.all([
+            env.DB.prepare(
+              'SELECT COUNT(*) n FROM users'
+            ).first(),
+
+            env.DB.prepare(
+              `SELECT COUNT(*) n
+               FROM reports
+               WHERE status='open'`
+            ).first(),
+
+            env.DB.prepare(
+              `SELECT COUNT(*) n
+               FROM verification_requests
+               WHERE status='pending'`
+            ).first(),
+
+            env.DB.prepare(
+              `SELECT COUNT(*) n
+               FROM calls
+               WHERE status='active'`
+            ).first()
+          ]);
 
         return json({
-          ok:true,
-          metrics:{
-            users:users.n,
-            openReports:reports.n,
-            pendingVerifications:checks.n,
-            activeCalls:calls.n
+          ok: true,
+          metrics: {
+            users: users.n,
+            openReports: reports.n,
+            pendingVerifications: checks.n,
+            activeCalls: calls.n
           }
         });
       }
 
-      if(path==='/admin/reports'&&method==='GET'){
-        const r=await env.DB.prepare(
-          `SELECT r.*,a.name reporter,b.name reported
+      if (path === '/admin/reports' && method === 'GET') {
+        const r = await env.DB.prepare(
+          `SELECT
+            r.*,
+            a.name reporter,
+            b.name reported
            FROM reports r
            JOIN users a ON a.id=r.reporter_id
            JOIN users b ON b.id=r.reported_user_id
@@ -1298,14 +1579,14 @@ export async function onRequest(context) {
         ).all();
 
         return json({
-          ok:true,
-          reports:r.results
+          ok: true,
+          reports: r.results
         });
       }
 
-      if(/^\/admin\/reports\/\d+\/resolve$/.test(path)&&method==='POST'){
-        const id=Number(path.split('/')[3]);
-        const d=await body(request);
+      if (/^\/admin\/reports\/\d+\/resolve$/.test(path) && method === 'POST') {
+        const id = Number(path.split('/')[3]);
+        const d = await body(request);
 
         await env.DB.batch([
           env.DB.prepare(
@@ -1317,16 +1598,162 @@ export async function onRequest(context) {
              WHERE id=? AND status='open'`
           ).bind(
             user.id,
-            clean(d.resolution||'Reviewed by moderation',300),
+            clean(
+              d.resolution || 'Reviewed by moderation',
+              300
+            ),
             id
           ),
 
           env.DB.prepare(
             `INSERT INTO audit_log(
-               actor_id,
-               action,
-               target_type,
-               target_id
-             ) VALUES(?,'resolve_report','report',?)`
-          ).bind(user.id,String(id))
-       
+              actor_id,action,target_type,target_id
+            ) VALUES(?,'resolve_report','report',?)`
+          ).bind(user.id, String(id))
+        ]);
+
+        return json({ ok: true });
+      }
+
+      if (path === '/admin/verifications' && method === 'GET') {
+        const r = await env.DB.prepare(
+          `SELECT
+            v.*,
+            u.name,
+            u.email,
+            u.adult_status
+           FROM verification_requests v
+           JOIN users u ON u.id=v.user_id
+           ORDER BY
+             CASE WHEN v.status='pending' THEN 0 ELSE 1 END,
+             v.id DESC
+           LIMIT 100`
+        ).all();
+
+        return json({
+          ok: true,
+          verifications: r.results
+        });
+      }
+
+      if (/^\/admin\/verifications\/\d+\/(approve|reject)$/.test(path) && method === 'POST') {
+        const [, , , id, action] = path.split('/');
+        const requestId = Number(id);
+
+        const verification = await env.DB.prepare(
+          `SELECT *
+           FROM verification_requests
+           WHERE id=? AND status='pending'`
+        ).bind(requestId).first();
+
+        if (!verification) {
+          return fail(
+            'Verification request not found.',
+            404
+          );
+        }
+
+        const status =
+          action === 'approve'
+            ? 'approved'
+            : 'rejected';
+
+        const adultStatus =
+          action === 'approve'
+            ? 'verified'
+            : 'rejected';
+
+        await env.DB.batch([
+          env.DB.prepare(
+            `UPDATE verification_requests
+             SET status=?,
+                 reviewed_by=?,
+                 reviewed_at=CURRENT_TIMESTAMP
+             WHERE id=?`
+          ).bind(
+            status,
+            user.id,
+            requestId
+          ),
+
+          env.DB.prepare(
+            `UPDATE users
+             SET adult_status=?,
+                 paid_call_eligible=
+                   CASE
+                     WHEN ?='verified'
+                      AND photo_data IS NOT NULL
+                      AND LENGTH(TRIM(bio))>=20
+                     THEN 1
+                     ELSE 0
+                   END,
+                 updated_at=CURRENT_TIMESTAMP
+             WHERE id=?`
+          ).bind(
+            adultStatus,
+            adultStatus,
+            verification.user_id
+          ),
+
+          env.DB.prepare(
+            `INSERT INTO audit_log(
+              actor_id,action,target_type,target_id
+            ) VALUES(?,?,'verification',?)`
+          ).bind(
+            user.id,
+            `verification_${status}`,
+            String(requestId)
+          )
+        ]);
+
+        return json({
+          ok: true,
+          status
+        });
+      }
+
+      if (/^\/admin\/users\/\d+\/suspend$/.test(path) && method === 'POST') {
+        const id = Number(path.split('/')[3]);
+
+        await env.DB.batch([
+          env.DB.prepare(
+            `UPDATE users
+             SET status='suspended'
+             WHERE id=? AND role='user'`
+          ).bind(id),
+
+          env.DB.prepare(
+            'DELETE FROM sessions WHERE user_id=?'
+          ).bind(id),
+
+          env.DB.prepare(
+            `INSERT INTO audit_log(
+              actor_id,action,target_type,target_id
+            ) VALUES(?,'suspend','user',?)`
+          ).bind(user.id, String(id))
+        ]);
+
+        return json({ ok: true });
+      }
+    }
+
+    return fail('Not found.', 404);
+
+  } catch (error) {
+    if (
+      String(error.message).includes(
+        'UNIQUE constraint'
+      )
+    ) {
+      return fail(
+        'That email is already registered.',
+        409
+      );
+    }
+
+    return fail(
+      error.message || 'Server error.',
+      error.status || 500
+    );
+  }
+}

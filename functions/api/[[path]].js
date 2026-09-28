@@ -378,6 +378,25 @@ export async function onRequest(context) {
       return json({ok:true,callId:r.meta.last_row_id,rate:offer.coins_per_minute,payerId,recipientId});
     }
 
+    if(/^\/calls\/\d+\/signal$/.test(path)){
+      const callId=Number(path.split('/')[2]),call=await env.DB.prepare('SELECT * FROM calls WHERE id=? AND (payer_id=? OR recipient_id=?)').bind(callId,user.id,user.id).first();
+      if(!call)return fail('Call not found.',404);
+      await env.DB.prepare(`CREATE TABLE IF NOT EXISTS call_signals (id INTEGER PRIMARY KEY AUTOINCREMENT,call_id INTEGER NOT NULL,sender_id INTEGER NOT NULL,recipient_id INTEGER NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`).run();
+      if(method==='POST'){
+        if(call.status!=='active')return fail('Call has ended.',409);
+        const d=await body(request),payload=JSON.stringify(d.payload||{});
+        if(payload.length>12000)return fail('Signal is too large.',413);
+        const recipient=Number(user.id)===Number(call.payer_id)?call.recipient_id:call.payer_id;
+        const r=await env.DB.prepare('INSERT INTO call_signals(call_id,sender_id,recipient_id,payload) VALUES(?,?,?,?)').bind(call.id,user.id,recipient,payload).run();
+        return json({ok:true,id:r.meta.last_row_id},201);
+      }
+      if(method==='GET'){
+        const url=new URL(request.url),after=Math.max(0,Number(url.searchParams.get('after')||0));
+        const rows=await env.DB.prepare('SELECT id,sender_id,payload,created_at FROM call_signals WHERE call_id=? AND recipient_id=? AND id>? ORDER BY id ASC LIMIT 100').bind(call.id,user.id,after).all();
+        return json({ok:true,signals:rows.results.map(x=>({id:x.id,senderId:x.sender_id,payload:JSON.parse(x.payload),createdAt:x.created_at}))});
+      }
+    }
+
     if(/^\/calls\/\d+\/(tick|end)$/.test(path)&&method==='POST'){
       const [, ,id,action]=path.split('/');
       const call=await env.DB.prepare(`SELECT *,CAST((julianday('now')-julianday(last_billed_at))*86400 AS INTEGER) elapsed_seconds FROM calls WHERE id=? AND (payer_id=? OR recipient_id=?) AND status='active'`).bind(Number(id),user.id,user.id).first();

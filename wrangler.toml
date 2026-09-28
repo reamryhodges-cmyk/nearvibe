@@ -9,5 +9,5 @@ database_id = "e7a98bdf-1769-4b56-8884-2fcf11d1e1a9"
 migrations_dir = "migrations"
 
 [vars]
-APP_ORIGIN = "https://nearvibe.reamryhodges.workers.dev"
+APP_ORIGIN = "https://nearvibe.pages.dev"
 SESSION_DAYS = "30"

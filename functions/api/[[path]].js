@@ -326,6 +326,15 @@ export async function onRequest(context) {
       return json({ok:true,balance:bal,recipientEarnedPence:earnedPence});
     }
 
+    if(path==='/calls/ice-servers'&&method==='GET'){
+      const servers=[{urls:'stun:stun.cloudflare.com:3478'},{urls:'stun:stun.l.google.com:19302'}];
+      if(env.TURN_URL&&env.TURN_USERNAME&&env.TURN_CREDENTIAL){
+        const urls=String(env.TURN_URL).split(',').map(x=>x.trim()).filter(Boolean);
+        if(urls.length)servers.push({urls:urls.length===1?urls[0]:urls,username:String(env.TURN_USERNAME),credential:String(env.TURN_CREDENTIAL)});
+      }
+      return json({ok:true,iceServers:servers,turnConfigured:!!(env.TURN_URL&&env.TURN_USERNAME&&env.TURN_CREDENTIAL)});
+    }
+
     if(path==='/call-offers'&&method==='GET'){
       const rows=await env.DB.prepare(`SELECT o.*,p.name proposer_name,r.name recipient_name FROM call_offers o JOIN users p ON p.id=o.proposer_id JOIN users r ON r.id=o.recipient_id JOIN matches m ON m.id=o.match_id WHERE (m.user_a=? OR m.user_b=?) AND o.status='pending' ORDER BY o.id DESC LIMIT 50`).bind(user.id,user.id).all();
       return json({ok:true,offers:rows.results});

@@ -46,3 +46,4 @@ python3 -m http.server 8080
 
 Open `http://localhost:8080`.
 Deployment refreshed after enabling Stripe production secrets.
+Deployment refresh: repaired app entry deployed 2026-09-28.

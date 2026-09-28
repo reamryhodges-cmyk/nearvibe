@@ -40,7 +40,7 @@ async function startCall(id,rate){
   try{
     stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:true});
     $('#localVideo').srcObject=stream;
-    pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.cloudflare.com:3478'},{urls:'stun:stun.l.google.com:19302'}]});
+    const ice=await api('/calls/ice-servers');pc=new RTCPeerConnection({iceServers:ice.iceServers});
     stream.getTracks().forEach(t=>pc.addTrack(t,stream));
     pc.ontrack=e=>{$('#remoteVideo').srcObject=e.streams[0];$('#cameraStatus').textContent='Live video connected'};
     pc.onicecandidate=e=>{if(e.candidate)sendSignal({type:'candidate',candidate:e.candidate}).catch(()=>{})};

@@ -450,5 +450,39 @@ export async function onRequest(context) {
       await env.DB.prepare(`INSERT INTO verification_requests(user_id,status) VALUES(?,'pending')`).bind(user.id).run();
       return json({ok:true,status:'pending'},201);
     }
-
-
+    if(path==='/payments/checkout'&&method==='POST'){if(!env.STRIPE_SECRET_KEY)return fail('Stripe is not configured yet.',503);const d=await body(request),pkg=await env.DB.prepare('SELECT * FROM coin_packages WHERE id=? AND active=1').bind(clean(d.packageId,30)).first();if(!pkg)return fail('Package not found.',404);const origin=clean(env.APP_ORIGIN,300).replace(/\/$/,'')||new URL(request.url).origin,form=new URLSearchParams({mode:'payment',success_url:`${origin}/app?payment=success`,cancel_url:`${origin}/app?payment=cancelled`,'managed_payments[enabled]':'false','line_items[0][quantity]':'1',client_reference_id:String(user.id),'metadata[user_id]':String(user.id),'metadata[package_id]':pkg.id});if(pkg.stripe_price_id)form.set('line_items[0][price]',pkg.stripe_price_id);else{form.set('line_items[0][price_data][currency]','gbp');form.set('line_items[0][price_data][unit_amount]',String(pkg.price_pence));form.set('line_items[0][price_data][product_data][name]',`${pkg.coins} NearVibe coins`);}const response=await fetch('https://api.stripe.com/v1/checkout/sessions',{method:'POST',headers:{authorization:`Bearer ${env.STRIPE_SECRET_KEY}`,'content-type':'application/x-www-form-urlencoded'},body:form});const result=await response.json();if(!response.ok)return fail(result.error?.message||'Stripe checkout failed.',502);return json({ok:true,url:result.url});}
+    if(path.startsWith('/admin/')) {
+      await requireUser(request,env,['admin','moderator']);
+      if(path==='/admin/overview'&&method==='GET'){
+        const [users,reports,checks,calls]=await Promise.all([env.DB.prepare('SELECT COUNT(*) n FROM users').first(),env.DB.prepare(`SELECT COUNT(*) n FROM reports WHERE status='open'`).first(),env.DB.prepare(`SELECT COUNT(*) n FROM verification_requests WHERE status='pending'`).first(),env.DB.prepare(`SELECT COUNT(*) n FROM calls WHERE status='active'`).first()]);
+        return json({ok:true,metrics:{users:users.n,openReports:reports.n,pendingVerifications:checks.n,activeCalls:calls.n}});
+      }
+      if(path==='/admin/reports'&&method==='GET'){
+        const r=await env.DB.prepare(`SELECT r.*,a.name reporter,b.name reported FROM reports r JOIN users a ON a.id=r.reporter_id JOIN users b ON b.id=r.reported_user_id ORDER BY CASE WHEN r.status='open' THEN 0 ELSE 1 END,r.id DESC`).all();
+        return json({ok:true,reports:r.results});
+      }
+      if(/^\/admin\/reports\/\d+\/resolve$/.test(path)&&method==='POST'){
+        const id=Number(path.split('/')[3]),d=await body(request);
+        await env.DB.batch([env.DB.prepare(`UPDATE reports SET status='resolved',reviewed_by=?,resolution=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='open'`).bind(user.id,clean(d.resolution||'Reviewed by moderation',300),id),env.DB.prepare(`INSERT INTO audit_log(actor_id,action,target_type,target_id) VALUES(?,'resolve_report','report',?)`).bind(user.id,String(id))]);
+        return json({ok:true});
+      }
+      if(path==='/admin/verifications'&&method==='GET'){
+        const r=await env.DB.prepare(`SELECT v.*,u.name,u.email,u.adult_status FROM verification_requests v JOIN users u ON u.id=v.user_id ORDER BY CASE WHEN v.status='pending' THEN 0 ELSE 1 END,v.id DESC LIMIT 100`).all();
+        return json({ok:true,verifications:r.results});
+      }
+      if(/^\/admin\/verifications\/\d+\/(approve|reject)$/.test(path)&&method==='POST'){
+        const [, , ,id,action]=path.split('/'),requestId=Number(id),verification=await env.DB.prepare(`SELECT * FROM verification_requests WHERE id=? AND status='pending'`).bind(requestId).first();
+        if(!verification)return fail('Verification request not found.',404);
+        const status=action==='approve'?'approved':'rejected',adultStatus=action==='approve'?'verified':'rejected';
+        await env.DB.batch([env.DB.prepare(`UPDATE verification_requests SET status=?,reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?`).bind(status,user.id,requestId),env.DB.prepare(`UPDATE users SET adult_status=?,paid_call_eligible=CASE WHEN ?='verified' AND photo_data IS NOT NULL AND LENGTH(TRIM(bio))>=20 THEN 1 ELSE 0 END,updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(adultStatus,adultStatus,verification.user_id),env.DB.prepare(`INSERT INTO audit_log(actor_id,action,target_type,target_id) VALUES(?,?, 'verification',?)`).bind(user.id,`verification_${status}`,String(requestId))]);
+        return json({ok:true,status});
+      }
+      if(/^\/admin\/users\/\d+\/suspend$/.test(path)&&method==='POST'){
+        const id=Number(path.split('/')[3]);
+        await env.DB.batch([env.DB.prepare(`UPDATE users SET status='suspended' WHERE id=? AND role='user'`).bind(id),env.DB.prepare('DELETE FROM sessions WHERE user_id=?').bind(id),env.DB.prepare(`INSERT INTO audit_log(actor_id,action,target_type,target_id) VALUES(?,'suspend','user',?)`).bind(user.id,String(id))]);
+        return json({ok:true});
+      }
+    }
+    return fail('Not found.',404);
+  } catch (error) { if(String(error.message).includes('UNIQUE constraint')) return fail('That email is already registered.',409); return fail(error.message || 'Server error.', error.status || 500); }
+}

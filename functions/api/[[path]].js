@@ -352,9 +352,8 @@ export async function onRequest(context) {
       if(!(recipientUser.is_ai&&recipientUser.is_demo)&&!recipientUser.paid_call_eligible)return fail('This member is not yet eligible for paid calls.',403);
       const r=await env.DB.prepare('INSERT INTO call_offers(match_id,proposer_id,recipient_id,coins_per_minute,parent_offer_id) VALUES(?,?,?,?,?)').bind(matchId,user.id,recipient,rate,d.parentOfferId||null).run();
       if(recipientUser.is_ai&&recipientUser.is_demo){
-        await env.DB.prepare(`UPDATE call_offers SET status='accepted',responded_at=CURRENT_TIMESTAMP WHERE id=?`).bind(r.meta.last_row_id).run();
-               const call=await env.DB.prepare('INSERT INTO calls(match_id,payer_id,recipient_id,rate) VALUES(?,?,?,?)').bind(matchId,user.id,recipient,rate).run();
-        return json({ok:true,id:r.meta.last_row_id,rate,accepted:true,callId:call.meta.last_row_id},201);
+        await env.DB.prepare(`UPDATE call_offers SET status='declined',responded_at=CURRENT_TIMESTAMP WHERE id=?`).bind(r.meta.last_row_id).run();
+        return json({ok:true,id:r.meta.last_row_id,rate,accepted:false,demo:true,message:'AI demo profiles do not provide paid live video calls. No coins were charged.'},201);
       }
       return json({ok:true,id:r.meta.last_row_id,rate,accepted:false},201);
     }

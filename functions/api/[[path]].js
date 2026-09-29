@@ -382,6 +382,14 @@ export async function onRequest(context) {
 
       const payerId=root.proposer_id;
       const recipientId=payerId===offer.proposer_id?offer.recipient_id:offer.proposer_id;
+      const recipientUser=await env.DB.prepare('SELECT is_ai,is_demo,paid_call_eligible FROM users WHERE id=? AND status=\'active\'').bind(recipientId).first();
+      if(!recipientUser)return fail('Call recipient is unavailable.',409);
+      if(recipientUser.is_ai&&recipientUser.is_demo)return fail('AI demo profiles do not provide paid live video calls. No coins were charged.',409);
+      if(!recipientUser.paid_call_eligible)return fail('This member is not currently eligible for paid calls.',403);
+      const payerWallet=await env.DB.prepare('SELECT balance FROM wallets WHERE user_id=?').bind(payerId).first();
+      if(Number(payerWallet?.balance||0)<Number(offer.coins_per_minute))return fail('Not enough coins to start the first paid minute.',409);
+      const existingCall=await env.DB.prepare('SELECT id,rate FROM calls WHERE match_id=? AND status=\'active\' ORDER BY id DESC LIMIT 1').bind(offer.match_id).first();
+      if(existingCall)return json({ok:true,callId:existingCall.id,rate:existingCall.rate,payerId,recipientId,reused:true});
       const r=await env.DB.prepare('INSERT INTO calls(match_id,payer_id,recipient_id,rate) VALUES(?,?,?,?)').bind(offer.match_id,payerId,recipientId,offer.coins_per_minute).run();
       return json({ok:true,callId:r.meta.last_row_id,rate:offer.coins_per_minute,payerId,recipientId});
     }

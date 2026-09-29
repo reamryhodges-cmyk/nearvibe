@@ -386,6 +386,12 @@ export async function onRequest(context) {
       return json({ok:true,callId:r.meta.last_row_id,rate:offer.coins_per_minute,payerId,recipientId});
     }
 
+    if(/^\/calls\/\d+$/.test(path)&&method==='GET'){
+      const callId=Number(path.split('/')[2]),call=await env.DB.prepare('SELECT id,match_id,payer_id,recipient_id,rate,status,billed_minutes,started_at,ended_at FROM calls WHERE id=? AND (payer_id=? OR recipient_id=?)').bind(callId,user.id,user.id).first();
+      if(!call)return fail('Call not found.',404);
+      return json({ok:true,call:{id:call.id,matchId:call.match_id,payerId:call.payer_id,recipientId:call.recipient_id,rate:call.rate,status:call.status,billedMinutes:call.billed_minutes,startedAt:call.started_at,endedAt:call.ended_at,isPayer:Number(user.id)===Number(call.payer_id)}});
+    }
+
     if(/^\/calls\/\d+\/signal$/.test(path)){
       const callId=Number(path.split('/')[2]),call=await env.DB.prepare('SELECT * FROM calls WHERE id=? AND (payer_id=? OR recipient_id=?)').bind(callId,user.id,user.id).first();
       if(!call)return fail('Call not found.',404);
@@ -413,6 +419,7 @@ export async function onRequest(context) {
 
       if(action==='end'){
         await env.DB.prepare(`UPDATE calls SET status='ended',ended_at=CURRENT_TIMESTAMP WHERE id=?`).bind(call.id).run();
+        try{await env.DB.prepare('DELETE FROM call_signals WHERE call_id=?').bind(call.id).run()}catch{}
         return json({ok:true});
       }
 

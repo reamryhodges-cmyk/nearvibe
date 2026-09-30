@@ -109,7 +109,7 @@ export async function onRequest(context) {
   try {
     await ensureCreatorEarningsSchema(env.DB);
     if(path==='/wallet'||path==='/payments/checkout'||path==='/payments/webhook')await ensureCoinPackages(env.DB);
-    if (path === '/health') return json({ ok:true, service:'NearVibe API', database:true, build:'coin-prices-20260927', time:new Date().toISOString() });
+    if (path === '/health') return json({ok:true,service:'NearVibe API',database:true,build:'production-hardening-20260930',paymentsConfigured:!!(env.STRIPE_SECRET_KEY&&env.STRIPE_WEBHOOK_SECRET),turnConfigured:!!(env.TURN_URL&&env.TURN_USERNAME&&env.TURN_CREDENTIAL),adminSetupConfigured:!!env.ADMIN_SETUP_TOKEN,time:new Date().toISOString()});
 
     if (path === '/payments/webhook' && method === 'POST') {
       if (!env.STRIPE_WEBHOOK_SECRET) return fail('Webhook is not configured.',503);

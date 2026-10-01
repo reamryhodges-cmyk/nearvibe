@@ -404,6 +404,7 @@ export async function onRequest(context) {
       const callId=Number(path.split('/')[2]),call=await env.DB.prepare('SELECT * FROM calls WHERE id=? AND (payer_id=? OR recipient_id=?)').bind(callId,user.id,user.id).first();
       if(!call)return fail('Call not found.',404);
       await env.DB.prepare(`CREATE TABLE IF NOT EXISTS call_signals (id INTEGER PRIMARY KEY AUTOINCREMENT,call_id INTEGER NOT NULL,sender_id INTEGER NOT NULL,recipient_id INTEGER NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`).run();
+      try{await env.DB.prepare("DELETE FROM call_signals WHERE created_at < datetime('now','-1 day')").run()}catch{}
       if(method==='POST'){
         if(call.status!=='active')return fail('Call has ended.',409);
         const d=await body(request),payload=JSON.stringify(d.payload||{});

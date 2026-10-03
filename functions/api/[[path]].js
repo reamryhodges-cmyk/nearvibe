@@ -327,12 +327,24 @@ export async function onRequest(context) {
     }
 
     if(path==='/calls/ice-servers'&&method==='GET'){
-      const servers=[{urls:'stun:stun.cloudflare.com:3478'},{urls:'stun:stun.l.google.com:19302'}];
-      if(env.TURN_URL&&env.TURN_USERNAME&&env.TURN_CREDENTIAL){
-        const urls=String(env.TURN_URL).split(',').map(x=>x.trim()).filter(Boolean);
-        if(urls.length)servers.push({urls:urls.length===1?urls[0]:urls,username:String(env.TURN_USERNAME),credential:String(env.TURN_CREDENTIAL)});
+      const fallback=[{urls:'stun:stun.cloudflare.com:3478'},{urls:'stun:stun.l.google.com:19302'}];
+      if(!(env.TURN_KEY_ID&&env.TURN_KEY_API_TOKEN))return json({ok:true,iceServers:fallback,turnConfigured:false});
+      try{
+        const r=await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(String(env.TURN_KEY_ID))}/credentials/generate-ice-servers`,{
+          method:'POST',
+          headers:{Authorization:`Bearer ${String(env.TURN_KEY_API_TOKEN)}`,'Content-Type':'application/json'},
+          body:JSON.stringify({ttl:86400})
+        });
+        if(!r.ok){
+          console.error('Cloudflare TURN credential request failed',r.status);
+          return json({ok:true,iceServers:fallback,turnConfigured:false});
+        }
+        const d=await r.json(),servers=Array.isArray(d.iceServers)&&d.iceServers.length?d.iceServers:fallback;
+        return json({ok:true,iceServers:servers,turnConfigured:Array.isArray(d.iceServers)&&d.iceServers.some(s=>s&&s.credential)});
+      }catch(e){
+        console.error('Cloudflare TURN credential request error',e?.message||e);
+        return json({ok:true,iceServers:fallback,turnConfigured:false});
       }
-      return json({ok:true,iceServers:servers,turnConfigured:!!(env.TURN_URL&&env.TURN_USERNAME&&env.TURN_CREDENTIAL)});
     }
 
     if(path==='/call-offers'&&method==='GET'){
